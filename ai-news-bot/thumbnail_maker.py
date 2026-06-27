@@ -60,7 +60,7 @@ def generate_thumbnail(title, output_path=None, bg_image_path=None):
     draw.rectangle([(0, H - bar_height - 60), (W, H - bar_height - 60 + bar_height)], fill=accent)
 
     brand_font = _get_font_path(32)
-    draw.text((30, H - 50), "AI NEWS TODAY", font=brand_font, fill=(200, 200, 255))
+    draw.text((30, H - 50), "GADGET NEWS", font=brand_font, fill=(200, 200, 255))
 
     headline = title[:80]
     headline_font = _get_font_path(56)

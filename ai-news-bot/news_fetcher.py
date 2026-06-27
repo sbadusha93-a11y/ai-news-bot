@@ -16,14 +16,14 @@ def _clean(text):
     return text.strip()
 
 
-def fetch_ai_news():
+def fetch_gadget_news():
     try:
         from newsapi import NewsApiClient
         api_key = os.getenv("NEWSAPI_KEY", "")
         if api_key:
             newsapi = NewsApiClient(api_key=api_key)
             headlines = newsapi.get_everything(
-                q="artificial intelligence",
+                q="smartphone OR mobile OR gadget OR iPhone OR Android",
                 language="en",
                 sort_by="publishedAt",
                 page_size=5,
@@ -36,7 +36,7 @@ def fetch_ai_news():
 
     api_key = os.getenv("NEWSAPI_KEY", "")
     if api_key:
-        url = f"https://newsapi.org/v2/everything?q=artificial+intelligence&language=en&sortBy=publishedAt&pageSize=5&apiKey={api_key}"
+        url = f"https://newsapi.org/v2/everything?q=smartphone+gadget+mobile+tech&language=en&sortBy=publishedAt&pageSize=5&apiKey={api_key}"
         try:
             resp = requests.get(url, timeout=15)
             if resp.status_code == 200:
@@ -51,7 +51,7 @@ def fetch_ai_news():
 
 def _fetch_fallback():
     try:
-        url = "https://www.theverge.com/ai-artificial-intelligence/rss.xml"
+        url = "https://www.theverge.com/mobile/rss.xml"
         resp = requests.get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
         if resp.status_code == 200:
             items = _parse_rss_theverge(resp)
@@ -61,7 +61,7 @@ def _fetch_fallback():
         pass
 
     try:
-        url = "https://hn.algolia.com/api/v1/search?query=artificial+intelligence&tags=story&hitsPerPage=5"
+        url = "https://hn.algolia.com/api/v1/search?query=smartphone+gadget+mobile+tech&tags=story&hitsPerPage=5"
         resp = requests.get(url, timeout=15)
         if resp.status_code == 200:
             items = _parse_hackernews(resp)
@@ -144,57 +144,57 @@ def _parse_hackernews(resp):
 def _generate_sample_news():
     return [
         {
-            "title": "OpenAI Unveils GPT-5 with Breakthrough Reasoning Capabilities",
-            "summary": "OpenAI has announced GPT-5, featuring advanced reasoning, multimodal understanding, and significantly reduced hallucination rates. The model sets new benchmarks across coding, mathematics, and creative tasks.",
-            "url": "https://openai.com",
-            "source": "OpenAI",
+            "title": "Samsung Galaxy S26 Ultra Leaks Reveal 200MP Camera and New Design",
+            "summary": "Leaked renders of the Samsung Galaxy S26 Ultra show a radical new design with a 200MP main camera, under-display selfie camera, and a titanium frame. Expected launch in early 2026.",
+            "url": "https://samsung.com",
+            "source": "Samsung",
             "date": datetime.now().strftime("%Y-%m-%d"),
         },
         {
-            "title": "Google DeepMind Achieves Major Breakthrough in Protein Folding",
-            "summary": "DeepMind's latest AI system has solved previously intractable protein structures, opening new pathways for drug discovery and disease understanding. Researchers call it a milestone for computational biology.",
-            "url": "https://deepmind.google",
-            "source": "DeepMind",
+            "title": "Apple iPhone 17 Pro Gets Revolutionary Battery Technology",
+            "summary": "Apple's iPhone 17 Pro introduces stacked battery technology with 40% higher density, enabling all-day battery life in a thinner form factor. The new A19 chip delivers desktop-class performance.",
+            "url": "https://apple.com",
+            "source": "Apple",
             "date": datetime.now().strftime("%Y-%m-%d"),
         },
         {
-            "title": "Anthropic Releases Claude 4 with Enhanced Safety Features",
-            "summary": "Anthropic's Claude 4 introduces constitutional AI improvements, longer context windows, and better alignment with human intent. Early tests show dramatic improvements in honesty and helpfulness.",
-            "url": "https://anthropic.com",
-            "source": "Anthropic",
+            "title": "OnePlus 13 Review: The Flagship Killer Returns",
+            "summary": "OnePlus 13 brings Snapdragon 8 Gen 4, 100W charging, and a Hasselblad-tuned camera system at a competitive price. Early reviews praise its display and battery life.",
+            "url": "https://oneplus.com",
+            "source": "OnePlus",
             "date": datetime.now().strftime("%Y-%m-%d"),
         },
         {
-            "title": "NVIDIA Announces Next-Gen AI Chip with 10x Performance",
-            "summary": "NVIDIA's new Blackwell Ultra architecture delivers 10x AI training performance while reducing energy consumption. Major cloud providers have already placed bulk orders.",
-            "url": "https://nvidia.com",
-            "source": "NVIDIA",
+            "title": "Xiaomi Mix Fold 4 Sets New Standard for Foldable Phones",
+            "summary": "Xiaomi's Mix Fold 4 features a crease-free inner display, 50MP Leica quad camera, and an ultra-thin 11mm folded design. It is being called the best foldable of 2026.",
+            "url": "https://xiaomi.com",
+            "source": "Xiaomi",
             "date": datetime.now().strftime("%Y-%m-%d"),
         },
         {
-            "title": "AI Regulations Take Shape: EU AI Act Enters Enforcement Phase",
-            "summary": "The EU AI Act's first enforcement phase begins, requiring transparency from high-risk AI systems. Companies face strict compliance requirements for training data disclosure and bias testing.",
-            "url": "https://digital-strategy.ec.europa.eu",
-            "source": "European Commission",
+            "title": "Google Pixel 11 Brings AI-Powered Camera Features",
+            "summary": "Google's Pixel 11 introduces Real Tone 3.0, Video Boost using on-device AI, and a new telephoto lens with 10x optical zoom. The Tensor G6 chip powers all new camera features.",
+            "url": "https://store.google.com",
+            "source": "Google",
             "date": datetime.now().strftime("%Y-%m-%d"),
         },
     ]
 
 
-def ai_news_to_script(news_items, hook=None):
+def gadget_news_to_script(news_items, hook=None):
     if hook:
         script = hook + "\n\n"
     else:
-        top = news_items[0]["title"] if news_items else "AI"
+        top = news_items[0]["title"] if news_items else "Gadget"
         hooks = [
-            f"You won't believe what AI just did. {top}.",
-            f"Big news in AI today. {top}.",
-            f"This changes everything. {top}.",
-            f"The future of AI is here. {top}.",
+            f"You won't believe what just launched. {top}.",
+            f"Big news in the gadget world today. {top}.",
+            f"This changes everything for mobile users. {top}.",
+            f"The future of smartphones is here. {top}.",
         ]
         script = random.choice(hooks) + "\n\n"
-    script += "Here are the top AI stories you need to know.\n\n"
+    script += "Here are the top mobile and gadget stories you need to know.\n\n"
     for i, item in enumerate(news_items, 1):
         script += f"Story {i}: {item['title']}. {item['summary']}\n\n"
-    script += "That's all for now. Subscribe so you don't miss the next update."
+    script += "That's all for now. Subscribe so you don't miss the next gadget update."
     return script
