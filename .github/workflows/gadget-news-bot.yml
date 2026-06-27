@@ -1,4 +1,4 @@
-name: AI News Bot
+name: Gadget News Bot
 
 on:
   schedule:
@@ -57,6 +57,6 @@ jobs:
           echo "NEWSAPI_KEY=${{ secrets.NEWSAPI_KEY }}" > ai-news-bot/.env
           echo "PEXELS_API_KEY=${{ secrets.PEXELS_API_KEY }}" >> ai-news-bot/.env
 
-      - name: Run AI News Bot
+      - name: Run Gadget News Bot
         run: python ai_news_bot.py --upload --shorts --privacy public
         working-directory: ai-news-bot
