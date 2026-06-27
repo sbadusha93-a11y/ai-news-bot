@@ -21,15 +21,15 @@ from thumbnail_maker import generate_thumbnail
 CLICKABLE_PREFIXES = [
     "BREAKING: {}",
     "{} - You Won't Believe This",
-    "{} - Gadget News Update",
-    "Just In: {}",
-    "This Phone Just Changed Everything: {}",
-    "Big News: {}",
+    "MIND BLOWING: {}",
+    "Just In: {} - Must Watch",
+    "This Changes Everything: {}",
+    "INSANE: {}",
 ]
 
 def _generate_title(news_items):
     top = news_items[0]["title"] if news_items else "Gadget News Today"
-    short = re.sub(r"[^a-zA-Z0-9 ]", "", top)[:60].strip()
+    short = re.sub(r"[^a-zA-Z0-9 ]", "", top)[:55].strip()
     prefix = random.choice(CLICKABLE_PREFIXES)
     title = prefix.format(short)[:95]
     date = datetime.now().strftime("%b %d")
@@ -37,23 +37,25 @@ def _generate_title(news_items):
 
 
 def generate_description(news_items):
+    top_title = news_items[0]["title"] if news_items else "Gadget News"
     lines = [
-        "Gadget News Update - Top Stories Today",
+        f"📱 {top_title}",
         "",
-        "#GadgetNews #Smartphone #MobileTech #TechNews #iPhone #Android #Samsung #GooglePixel #OnePlus #Xiaomi #Foldable #5G",
+        "🔥 The LATEST mobile and gadget news you NEED to know today!",
         "",
-        "Timestamps:",
+        "📌 Timestamps:",
     ]
     for i, item in enumerate(news_items, 1):
         title = item["title"][:80]
         source = item.get("source", "Gadget News")
         lines.append(f"{i}. {title} - {source}")
     lines.append("")
-    lines.append("Stay updated with the latest mobile phones and gadgets.")
-    lines.append("Subscribe for daily gadget news coverage.")
+    lines.append("👍 Which story surprised you most? Comment below!")
+    lines.append("🔔 Subscribe for daily gadget news: https://www.youtube.com/@GadgetNews")
     lines.append("")
-    lines.append(f"Published: {datetime.now().strftime('%B %d, %Y')}")
-    lines.append("#GadgetNews #Smartphone #TechNews #MobileTech")
+    lines.append(f"📅 Published: {datetime.now().strftime('%B %d, %Y')}")
+    lines.append("")
+    lines.append("#GadgetNews #Smartphone #TechNews #iPhone #Android #Samsung #GooglePixel #OnePlus #Xiaomi #FoldablePhone #5G #MobileTech #TechUpdate #GadgetReview #Smartphone2026")
     return "\n".join(lines)
 
 
@@ -62,17 +64,18 @@ def get_hook(news_items):
     title = top.get("title", "Gadget")
     source = top.get("source", "")
     hooks = [
-        f"You won't believe what just launched in tech. {title}.",
-        f"Big news from {source}. {title}.",
-        f"This is huge for mobile fans. {title}.",
-        f"Gadget lovers listen up. {title}.",
-        f"If you care about smartphones, listen up. {title}.",
+        f"You won't believe what just launched. {title}.",
+        f"Big news from {source} is going to shock you. {title}.",
+        f"This changes everything for mobile fans. {title}.",
+        f"Gadget lovers, this one is for you. {title}.",
+        f"This is the biggest tech news today. {title}.",
+        f"Wait until you hear this. {title}.",
     ]
     return random.choice(hooks)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="AI News Video Bot")
+    parser = argparse.ArgumentParser(description="Gadget News Video Bot")
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--video", default=None)
     parser.add_argument("--privacy", choices=["public", "unlisted", "private"], default="public")
@@ -147,8 +150,9 @@ def main():
             "Gadget News", "Mobile Tech", "Smartphone", "iPhone", "Android",
             "Samsung Galaxy", "Google Pixel", "OnePlus", "Xiaomi", "Tech News",
             "Smartphone News", "Mobile Phone", "5G", "Foldable Phone",
-            "Flagship Phone", "Phone Review", "Gadget Update", "Technology",
-            "Mobile Technology", "Smartphone 2026",
+            "Flagship Phone", "Gadget Update", "Technology", "Mobile Technology",
+            "Smartphone 2026", "Tech Update", "Gadget Review", "Phone Launch",
+            "Samsung", "Apple", "Google", "OnePlus", "Xiaomi",
         ]
 
         video_id = upload_video(
@@ -168,8 +172,8 @@ def main():
                 shorts_id = upload_video(
                     video_path=shorts_path,
                     title=f"{title} #Shorts",
-                    description=description + "\n\n#Shorts #YouTubeShorts",
-                    tags=tags + ["Shorts", "YouTubeShorts"],
+                    description=description + "\n\n#Shorts #YouTubeShorts #GadgetShorts",
+                    tags=tags + ["Shorts", "YouTubeShorts", "Viral", "Trending"],
                     privacy_status=args.privacy,
                 )
                 if shorts_id:

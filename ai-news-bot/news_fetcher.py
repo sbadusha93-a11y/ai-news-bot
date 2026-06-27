@@ -187,14 +187,16 @@ def gadget_news_to_script(news_items, hook=None):
     else:
         top = news_items[0]["title"] if news_items else "Gadget"
         hooks = [
+            f"BREAKING NEWS: {top}.",
             f"You won't believe what just launched. {top}.",
-            f"Big news in the gadget world today. {top}.",
-            f"This changes everything for mobile users. {top}.",
-            f"The future of smartphones is here. {top}.",
+            f"This changes EVERYTHING for smartphone users. {top}.",
+            f"The future of phones is finally here. {top}.",
+            f"This is the biggest gadget news of the year. {top}.",
         ]
         script = random.choice(hooks) + "\n\n"
-    script += "Here are the top mobile and gadget stories you need to know.\n\n"
+    script += "Here are the top mobile and gadget stories you need to know right now.\n\n"
     for i, item in enumerate(news_items, 1):
         script += f"Story {i}: {item['title']}. {item['summary']}\n\n"
-    script += "That's all for now. Subscribe so you don't miss the next gadget update."
+    script += "Which of these gadgets are you most excited about? Let me know in the comments below. "
+    script += "And if you enjoyed this video, smash that like button and subscribe to the channel so you never miss another gadget update. See you in the next one!"
     return script

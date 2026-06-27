@@ -383,11 +383,28 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
         scene = CompositeVideoClip([bg, txt_clip], size=(W, H)).with_duration(segment_duration)
         segments.append(scene)
 
+    cta_duration = 5
+    cta_clip = ImageClip(
+        np.array(Image.new("RGB", (W, H), (10, 10, 35))), duration=cta_duration
+    )
+    cta_text = TextClip(
+        text="🔥 Loved this content?\n\n👍 LIKE\n💬 COMMENT\n🔔 SUBSCRIBE",
+        font_size=42, color="white", font=_get_font_path(),
+        stroke_color="black", stroke_width=3, method="caption",
+        size=(W - 100, None),
+    ).with_duration(cta_duration).with_position("center").with_start(0)
+    cta_segment = CompositeVideoClip([cta_clip, cta_text], size=(W, H)).with_duration(cta_duration)
+    segments.append(cta_segment)
+
     print("[+] Concatenating video...")
     final_video = concatenate_videoclips(segments, method="compose")
 
-    final_video = final_video.with_duration(audio_duration)
-    final_video = final_video.with_audio(audio)
+    total_duration = audio_duration + cta_duration
+    final_video = final_video.with_duration(total_duration)
+
+    cta_audio = AudioFileClip(audio_path).subclipped(0, cta_duration).with_effects([])
+    from moviepy import concatenate_audioclips
+    final_video = final_video.with_audio(concatenate_audioclips([audio, cta_audio]))
     final_video = final_video.resized(height=720)
 
     print(f"[+] Writing video to {output_path}...")
