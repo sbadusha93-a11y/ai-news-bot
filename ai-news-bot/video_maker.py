@@ -102,7 +102,7 @@ BLOCKED_KEYWORDS = {
     "election", "campaign", "vote", "voter", "government",
 }
 
-SAFE_MODIFIERS = ["technology", "digital", "abstract", "background", "concept", "innovation", "data", "circuit", "network", "cyber"]
+SAFE_MODIFIERS = ["technology", "digital", "photography", "innovation", "data", "circuit", "network", "cyber", "server", "robot", "future"]
 
 def _extract_keywords(title, summary=""):
     import re
@@ -178,6 +178,11 @@ def _download_images(keywords, count=3):
         "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=1280&h=720&fit=crop",
         "https://images.unsplash.com/photo-1555949963-ff9fe0c870eb?w=1280&h=720&fit=crop",
         "https://images.unsplash.com/photo-1531746790095-e5cb15765ec7?w=1280&h=720&fit=crop",
+        "https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=1280&h=720&fit=crop",
+        "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=1280&h=720&fit=crop",
+        "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1280&h=720&fit=crop",
+        "https://images.unsplash.com/photo-1518432031352-d6fc5c10da5a?w=1280&h=720&fit=crop",
+        "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=1280&h=720&fit=crop",
     ]
     for url in stock_urls:
         try:
@@ -203,17 +208,24 @@ def _generate_fallback_images(count=3):
     paths = []
     from PIL import Image, ImageDraw
     for i in range(count):
-        img = Image.new("RGB", (W, H), (random.randint(5, 30), random.randint(5, 30), random.randint(30, 60)))
+        colors = [
+            ((10, 10, 35), (30, 60, 120)),
+            ((20, 20, 50), (60, 30, 100)),
+            ((5, 20, 40), (40, 80, 60)),
+            ((30, 10, 50), (80, 40, 100)),
+            ((10, 30, 50), (50, 100, 140)),
+        ]
+        (r1, g1, b1), (r2, g2, b2) = random.choice(colors)
+        img = Image.new("RGB", (W, H), (r1, g1, b1))
         draw = ImageDraw.Draw(img)
-        for _ in range(random.randint(5, 15)):
-            x, y = random.randint(0, W), random.randint(0, H)
-            r = random.randint(20, 100)
-            draw.ellipse(
-                [x - r, y - r, x + r, y + r],
-                fill=(random.randint(30, 100), random.randint(30, 100), random.randint(80, 150)),
-            )
+        for y in range(H):
+            blend = y / H
+            cr = int(r1 + (r2 - r1) * blend)
+            cg = int(g1 + (g2 - g1) * blend)
+            cb = int(b1 + (b2 - b1) * blend)
+            draw.line([(0, y), (W, y)], fill=(cr, cg, cb))
         fpath = os.path.join(output_dir, f"fallback_{i}.jpg")
-        img.save(fpath, quality=85)
+        img.save(fpath, quality=90)
         paths.append(fpath)
     return paths
 
@@ -233,6 +245,42 @@ def _get_font_path():
         if os.path.exists(c):
             return c
     return "DejaVuSans"
+
+
+def _ken_burns_clip(img_path, duration, output_size=(1280, 720)):
+    from moviepy import ImageClip
+
+    W, H = output_size
+    PAN_SCALE = 1.12
+
+    clip = ImageClip(img_path, duration=duration)
+    clip = clip.resized(width=int(W * PAN_SCALE))
+    if clip.h < int(H * PAN_SCALE):
+        clip = clip.resized(height=int(H * PAN_SCALE))
+
+    max_dx = clip.w - W
+    max_dy = clip.h - H
+
+    direction = random.choice([
+        (0.4, 0.3),
+        (0.3, 0.4),
+        (0.5, 0.2),
+        (0.2, 0.5),
+        (0.5, 0.5),
+    ])
+
+    start_x = max_dx * direction[0]
+    start_y = max_dy * direction[1]
+    end_x = max_dx * (1 - direction[0])
+    end_y = max_dy * (1 - direction[1])
+
+    def pos_func(t):
+        progress = t / duration if duration > 0 else 0
+        x = start_x + (end_x - start_x) * progress
+        y = start_y + (end_y - start_y) * progress
+        return (-x, -y)
+
+    return clip.with_position(pos_func).with_duration(duration)
 
 
 def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
@@ -256,28 +304,25 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
     audio_duration = audio.duration
 
     print(f"[+] Audio duration: {audio_duration:.1f}s")
-    print("[+] Creating video segments...")
+    print("[+] Creating video segments (Ken Burns effect)...")
 
     segments = []
     segment_duration = audio_duration / (len(news_items) + 1)
+    W, H = 1280, 720
 
     intro_img = create_text_image("AI News Update\nTop Stories Today", bg_color=(10, 10, 35))
-    intro_clip = ImageClip(intro_img, duration=segment_duration).with_fps(12)
+    intro_clip = ImageClip(intro_img, duration=segment_duration).with_fps(24)
     segments.append(intro_clip)
 
     for item in news_items:
         keywords = _extract_keywords(item["title"], item.get("summary", ""))
         img_paths = _download_images(keywords, count=2)
-        W, H = 1280, 720
+
         if img_paths:
-            clip = ImageClip(img_paths[0], duration=segment_duration).with_fps(12)
-            clip = clip.resized(width=W)
-            if clip.h < H:
-                clip = clip.resized(height=H)
-            clip = clip.cropped(x_center=clip.w / 2, y_center=clip.h / 2, width=W, height=H)
+            bg = _ken_burns_clip(img_paths[0], segment_duration, (W, H))
         else:
-            clip = create_text_image(item["title"], bg_color=(20, 20, 50))
-            clip = ImageClip(clip, duration=segment_duration).with_fps(24)
+            txt_img = create_text_image(item["title"], bg_color=(20, 20, 50))
+            bg = ImageClip(txt_img, duration=segment_duration).with_fps(24)
 
         txt_clip = TextClip(
             text=item["title"],
@@ -290,8 +335,8 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
             size=(1200, None),
         ).with_duration(segment_duration).with_position(("center", "bottom")).with_start(0)
 
-        overlay = CompositeVideoClip([clip, txt_clip])
-        segments.append(overlay)
+        scene = CompositeVideoClip([bg, txt_clip], size=(W, H)).with_duration(segment_duration)
+        segments.append(scene)
 
     print("[+] Concatenating video...")
     final_video = concatenate_videoclips(segments, method="compose")
@@ -305,8 +350,8 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
         output_path,
         codec="libx264",
         audio_codec="aac",
-        fps=12,
-        bitrate="1000k",
+        fps=24,
+        bitrate="2000k",
         preset="ultrafast",
         threads=4,
     )
@@ -354,10 +399,13 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
     for item in news_items:
         keywords = _extract_keywords(item["title"], item.get("summary", ""))
         img_paths = _download_images(keywords, count=1)
-        bg_clip = ImageClip(img_paths[0], duration=seg_dur).with_fps(12) if img_paths else ImageClip(
-            Image.new("RGB", (W, H), (20, 20, 50)), duration=seg_dur
-        )
-        bg_clip = bg_clip.resized(width=W).cropped(x_center=bg_clip.w / 2, y_center=bg_clip.h / 2, width=W, height=H)
+
+        if img_paths:
+            bg_clip = _ken_burns_clip(img_paths[0], seg_dur, (W, H))
+        else:
+            bg_clip = ImageClip(
+                Image.new("RGB", (W, H), (20, 20, 50)), duration=seg_dur
+            )
 
         txt = TextClip(
             text=item["title"],
@@ -366,7 +414,7 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
             size=(W - 60, None),
         ).with_duration(seg_dur).with_position(("center", H - 300)).with_start(0)
 
-        segments.append(CompositeVideoClip([bg_clip, txt]))
+        segments.append(CompositeVideoClip([bg_clip, txt], size=(W, H)))
 
     final = concatenate_videoclips(segments, method="compose")
     final = final.with_duration(audio_duration).with_audio(audio)
@@ -374,7 +422,7 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
     print(f"[+] Writing Shorts to {output_path}...")
     final.write_videofile(
         output_path, codec="libx264", audio_codec="aac",
-        fps=12, bitrate="2000k", preset="ultrafast", threads=4,
+        fps=24, bitrate="3000k", preset="ultrafast", threads=4,
     )
     final.close()
     audio.close()
