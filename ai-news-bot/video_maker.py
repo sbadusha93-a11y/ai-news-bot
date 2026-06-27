@@ -3,9 +3,21 @@ import re
 import random
 import textwrap
 import requests
-from gtts import gTTS
+import asyncio
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
+
+
+BRAND_IMAGE_TERMS = {
+    "samsung": "Samsung Galaxy smartphone product", "apple": "Apple iPhone product",
+    "google": "Google Pixel phone", "xiaomi": "Xiaomi smartphone",
+    "oneplus": "OnePlus phone", "sony": "Sony Xperia phone",
+    "nokia": "Nokia phone", "motorola": "Motorola phone",
+    "oppo": "Oppo smartphone", "vivo": "Vivo smartphone",
+    "huawei": "Huawei phone", "honor": "Honor phone",
+    "realme": "Realme phone", "nothing": "Nothing Phone",
+    "asus": "Asus phone", "lenovo": "Lenovo phone",
+}
 
 
 def _find_ffmpeg():
@@ -24,6 +36,29 @@ def _find_ffmpeg():
 
 
 _ffmpeg_path = _find_ffmpeg()
+
+
+def _generate_narration(script, output_path):
+    try:
+        import edge_tts
+        voice = random.choice([
+            "en-US-JennyNeural",
+            "en-US-AriaNeural",
+            "en-GB-SoniaNeural",
+            "en-GB-RyanNeural",
+            "en-US-GuyNeural",
+        ])
+        async def _do_tts():
+            communicate = edge_tts.Communicate(script, voice)
+            await communicate.save(output_path)
+        asyncio.run(_do_tts())
+        print(f"    Voice: {voice}")
+        return True
+    except Exception:
+        from gtts import gTTS
+        tts = gTTS(text=script, lang="en", slow=False)
+        tts.save(output_path)
+        return True
 
 
 def _get_text_dimensions(text, font, max_width):
@@ -59,7 +94,7 @@ def create_text_image(text, size=(1280, 720), bg_color=(10, 10, 35)):
         body_font = ImageFont.load_default()
 
     lines = text.split("\n")
-    title = lines[0] if lines else "AI News"
+    title = lines[0] if lines else "News"
     body = "\n".join(lines[1:]) if len(lines) > 1 else ""
 
     _, _, tw, th = draw.textbbox((0, 0), title, font=title_font)
@@ -84,56 +119,59 @@ def create_text_image(text, size=(1280, 720), bg_color=(10, 10, 35)):
     return img_path
 
 
-BLOCKED_KEYWORDS = {
-    "sex", "sexy", "sexual", "porn", "porno", "pornography", "nude", "naked",
-    "erotic", "adult", "xxx", "18+", "nsfw", "lingerie", "bikini", "swimsuit",
-    "model", "models", "modeling", "fashion", "beauty", "makeup", "cosmetic",
-    "girl", "girls", "boy", "boys", "child", "children", "baby", "babies",
-    "kid", "kids", "teen", "teens", "teenager", "infant", "toddler",
-    "woman", "women", "man", "men", "female", "male", "lady", "ladies",
-    "gentleman", "gentlemen", "portrait", "people", "person", "human",
-    "face", "faces", "smile", "smiling", "hair", "eyes", "beard", "mustache",
-    "glasses", "sunglasses", "selfie", "group", "crowd", "audience",
-    "hand", "hands", "arm", "arms", "team", "staff", "employee",
-    "professional", "executive", "doctor", "nurse", "teacher", "student",
-    "customer", "client", "athlete", "player", "coach", "family", "friend",
-    "race", "racial", "ethnic", "ethnicity", "skin", "color", "colored",
-    "black", "white", "asian", "african", "european", "american", "indian",
-    "chinese", "japanese", "korean", "arab", "hispanic", "latino", "latinx",
-    "caste", "religion", "religious", "muslim", "christian", "hindu", "jewish",
-    "buddhist", "country", "countries", "nation", "national", "nationality",
-    "patriotic", "flag", "border", "immigrant", "immigration",
-    "discrimination", "inequality", "protest", "riot", "violence", "weapon",
-    "war", "military", "soldier", "gun", "politics", "political", "politician",
-    "election", "campaign", "vote", "voter", "government",
-}
+def _build_pexels_query(title, summary=""):
+    text = (title + " " + summary).lower()
 
-SAFE_MODIFIERS = ["technology", "digital", "abstract", "innovation", "data", "circuit", "network", "cyber", "server", "robot", "future", "rendering", "hologram", "background"]
+    for brand, term in BRAND_IMAGE_TERMS.items():
+        if brand in text:
+            return term
 
-def _extract_keywords(title, summary=""):
-    import re
-    text = f"{title} {summary}"
-    text = re.sub(r"[^a-zA-Z0-9 ]", " ", text)
-    stopwords = {"the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-                 "have", "has", "had", "do", "does", "did", "will", "would", "could",
-                 "should", "may", "might", "shall", "can", "need", "dare", "ought",
-                 "used", "with", "that", "this", "these", "those", "for", "and", "nor",
-                 "but", "or", "yet", "so", "not", "to", "in", "on", "at", "by", "from",
-                 "of", "off", "out", "up", "down", "into", "over", "under", "again",
-                 "further", "then", "once", "here", "there", "when", "where", "why",
-                 "how", "all", "each", "every", "both", "few", "more", "most", "other",
-                 "some", "such", "after", "before", "between", "through", "during",
-                 "their", "they", "them", "its", "it", "he", "she", "we", "you", "me",
-                 "who", "whom", "which", "what", "than"}
-    words = [w for w in text.split() if w.lower() not in stopwords and len(w) > 3 and w.lower() not in BLOCKED_KEYWORDS]
-    seen = set()
-    unique = []
+    keywords = ["smartphone", "technology", "mobile phone", "gadget"]
+    words = re.findall(r"[a-zA-Z]{4,}", text)
+    stopwords = {"the", "this", "that", "with", "from", "have", "been", "were",
+                 "what", "when", "where", "which", "their", "they", "your", "will",
+                 "would", "could", "should", "after", "before", "between", "about"}
+    brand_names = {"samsung", "apple", "google", "xiaomi", "oneplus", "sony",
+                   "nokia", "motorola", "oppo", "vivo", "huawei", "honor",
+                   "realme", "asus", "lenovo"}
     for w in words:
-        lw = w.lower()
-        if lw not in seen:
-            seen.add(lw)
-            unique.append(w)
-    return unique[:3] if unique else ["AI", "technology"]
+        if w in brand_names:
+            return f"{w} smartphone"
+    for w in words:
+        if len(w) > 4 and w.lower() not in stopwords:
+            keywords.append(w)
+            if len(keywords) >= 4:
+                break
+
+    return " ".join(keywords[:3]) + " smartphone technology"
+
+
+def _download_pexels_image(keywords, output_path, title=""):
+    api_key = os.getenv("PEXELS_API_KEY", "")
+    if not api_key:
+        return None
+
+    query = _build_pexels_query(title, " ".join(keywords)) if title else " ".join(keywords[:3]) + " smartphone"
+    try:
+        resp = requests.get(
+            "https://api.pexels.com/v1/search",
+            headers={"Authorization": api_key},
+            params={"query": query, "per_page": 5, "orientation": "landscape"},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            photos = resp.json().get("photos", [])
+            if photos:
+                photo = random.choice(photos)
+                img_url = photo["src"]["large2x"]
+                img_resp = requests.get(img_url, timeout=20)
+                if img_resp.status_code == 200:
+                    with open(output_path, "wb") as f:
+                        f.write(img_resp.content)
+                    return output_path
+    except Exception:
+        pass
+    return None
 
 
 def _generate_ai_art_bg(keywords, count=3, output_size=(1280, 720)):
@@ -141,7 +179,6 @@ def _generate_ai_art_bg(keywords, count=3, output_size=(1280, 720)):
     output_dir = os.path.join(os.path.dirname(__file__), "assets", "images")
     os.makedirs(output_dir, exist_ok=True)
     paths = []
-    from PIL import Image, ImageDraw
 
     palette = [
         {"bg": ((10, 10, 40), (20, 50, 100)), "accent": (0, 120, 255), "glow": (100, 180, 255)},
@@ -185,7 +222,6 @@ def _generate_ai_art_bg(keywords, count=3, output_size=(1280, 720)):
             cy = random.randint(50, H - 50)
             r = random.randint(15, 40)
             for ring in range(r, 0, -3):
-                alpha = int(60 * (1 - ring / r))
                 color = tuple(
                     max(0, min(255, int(c + (glow[i] - c) * (1 - ring / r))))
                     for i, c in enumerate(accent)
@@ -208,47 +244,20 @@ def _generate_ai_art_bg(keywords, count=3, output_size=(1280, 720)):
                 line_color = tuple(max(0, min(255, c)) for c in line_color)
                 draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(1, 3))
 
-        fpath = os.path.join(output_dir, f"ai_art_{i}.jpg")
+        fpath = os.path.join(output_dir, f"bg_{i}.jpg")
         img.save(fpath, quality=92)
         paths.append(fpath)
     return paths
 
 
-def _download_pexels_image(keywords, output_path):
-    api_key = os.getenv("PEXELS_API_KEY", "")
-    if not api_key:
-        return None
-    query = " ".join(keywords[:3]) + " smartphone technology"
-    try:
-        resp = requests.get(
-            "https://api.pexels.com/v1/search",
-            headers={"Authorization": api_key},
-            params={"query": query, "per_page": 5, "orientation": "landscape"},
-            timeout=15,
-        )
-        if resp.status_code == 200:
-            photos = resp.json().get("photos", [])
-            if photos:
-                photo = random.choice(photos)
-                img_url = photo["src"]["large2x"]
-                img_resp = requests.get(img_url, timeout=15)
-                if img_resp.status_code == 200:
-                    with open(output_path, "wb") as f:
-                        f.write(img_resp.content)
-                    return output_path
-    except Exception:
-        pass
-    return None
-
-
-def _download_images(keywords, count=3):
+def _download_images(keywords, count=3, title=""):
     output_dir = os.path.join(os.path.dirname(__file__), "assets", "images")
     os.makedirs(output_dir, exist_ok=True)
     img_paths = []
 
     for i in range(count):
         fpath = os.path.join(output_dir, f"photo_{i}.jpg")
-        path = _download_pexels_image(keywords, fpath)
+        path = _download_pexels_image(keywords, fpath, title=title)
         if path is None:
             path = _generate_ai_art_bg(keywords, count=1, output_size=(1280, 720))
             if path:
@@ -280,7 +289,7 @@ def _ken_burns_clip(img_path, duration, output_size=(1280, 720)):
     from moviepy import ImageClip
 
     W, H = output_size
-    PAN_SCALE = 1.12
+    PAN_SCALE = 1.15
 
     clip = ImageClip(img_path, duration=duration)
     clip = clip.resized(width=int(W * PAN_SCALE))
@@ -291,11 +300,7 @@ def _ken_burns_clip(img_path, duration, output_size=(1280, 720)):
     max_dy = clip.h - H
 
     direction = random.choice([
-        (0.4, 0.3),
-        (0.3, 0.4),
-        (0.5, 0.2),
-        (0.2, 0.5),
-        (0.5, 0.5),
+        (0.4, 0.3), (0.3, 0.4), (0.5, 0.2), (0.2, 0.5), (0.5, 0.5),
     ])
 
     start_x = max_dx * direction[0]
@@ -312,38 +317,33 @@ def _ken_burns_clip(img_path, duration, output_size=(1280, 720)):
     return clip.with_position(pos_func).with_duration(duration)
 
 
-def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
+def create_news_video(news_items, script, output_path="gadget_news_video.mp4"):
     from moviepy import (
-        VideoFileClip,
-        ImageClip,
-        AudioFileClip,
-        TextClip,
-        CompositeVideoClip,
-        concatenate_videoclips,
-        concatenate_audioclips,
+        ImageClip, AudioFileClip, TextClip,
+        CompositeVideoClip, concatenate_videoclips, concatenate_audioclips,
     )
 
     os.makedirs(os.path.join(os.path.dirname(__file__), "assets"), exist_ok=True)
 
-    print("[+] Generating voiceover...")
-    tts = gTTS(text=script, lang="en", slow=False)
+    print("[+] Generating voiceover with neural TTS...")
     audio_path = os.path.join(os.path.dirname(__file__), "assets", "narration.mp3")
-    tts.save(audio_path)
+    _generate_narration(script, audio_path)
     audio = AudioFileClip(audio_path)
     audio_duration = audio.duration
 
     print(f"[+] Audio duration: {audio_duration:.1f}s")
-    print("[+] Creating video segments (Ken Burns effect)...")
+    print("[+] Creating video segments...")
 
     segments = []
     segment_duration = audio_duration / (len(news_items) + 1)
     W, H = 1280, 720
 
-    intro_img_path = _download_images(["smartphone", "gadget", "technology"], count=1)
+    print("    Intro...")
+    intro_img_path = _download_images(["smartphone", "gadget", "technology"], count=1, title="Gadget News")
     if intro_img_path:
         intro_bg = _ken_burns_clip(intro_img_path[0], segment_duration, (W, H))
     else:
-        intro_bg_img = create_text_image("Gadget News Update\nTop Stories Today", bg_color=(10, 10, 35))
+        intro_bg_img = create_text_image("Gadget News\nTop Stories Today", bg_color=(10, 10, 35))
         intro_bg = ImageClip(intro_bg_img, duration=segment_duration).with_fps(24)
 
     intro_txt = TextClip(
@@ -356,8 +356,9 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
     segments.append(CompositeVideoClip([intro_bg, intro_txt], size=(W, H)).with_duration(segment_duration))
 
     for i, item in enumerate(news_items):
-        keywords = _extract_keywords(item["title"], item.get("summary", ""))
-        img_paths = _download_images(keywords, count=1)
+        print(f"    Story {i+1}: {item['title'][:60]}...")
+        keywords = []
+        img_paths = _download_images(keywords, count=1, title=item["title"])
 
         if img_paths:
             bg = _ken_burns_clip(img_paths[0], segment_duration, (W, H))
@@ -365,13 +366,12 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
             txt_img = create_text_image(item["title"], bg_color=(20, 20, 50))
             bg = ImageClip(txt_img, duration=segment_duration).with_fps(24)
 
-        story_num = i + 1
-        summary = item.get("summary", "")[:150]
-        caption_text = f"Story {story_num}\n{item['title']}\n{summary}"
+        summary = item.get("summary", "")[:200]
+        caption_text = f"{item['title']}\n{summary}"
 
         txt_clip = TextClip(
             text=caption_text,
-            font_size=24,
+            font_size=26,
             color="white",
             stroke_color="black",
             stroke_width=2,
@@ -380,15 +380,22 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
             size=(W - 80, None),
         ).with_duration(segment_duration).with_position(("center", 80)).with_start(0)
 
-        scene = CompositeVideoClip([bg, txt_clip], size=(W, H)).with_duration(segment_duration)
+        source_tag = TextClip(
+            text=f"Source: {item.get('source', 'Tech News')}",
+            font_size=16, color="gray", font=_get_font_path(),
+            stroke_color="black", stroke_width=1,
+        ).with_duration(segment_duration).with_position(("right", H - 40)).with_start(0)
+
+        scene = CompositeVideoClip([bg, txt_clip, source_tag], size=(W, H)).with_duration(segment_duration)
         segments.append(scene)
 
-    cta_duration = 5
+    print("    End card...")
+    cta_duration = 6
     cta_clip = ImageClip(
         np.array(Image.new("RGB", (W, H), (10, 10, 35))), duration=cta_duration
     )
     cta_text = TextClip(
-        text="🔥 Loved this content?\n\n👍 LIKE\n💬 COMMENT\n🔔 SUBSCRIBE",
+        text="Thanks for watching!\n\n👍 LIKE if you enjoyed\n💬 COMMENT your thoughts\n🔔 SUBSCRIBE for more",
         font_size=42, color="white", font=_get_font_path(),
         stroke_color="black", stroke_width=3, method="caption",
         size=(W - 100, None),
@@ -402,9 +409,13 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
     total_duration = audio_duration + cta_duration
     final_video = final_video.with_duration(total_duration)
 
-    cta_audio = AudioFileClip(audio_path).subclipped(0, cta_duration).with_effects([])
-    from moviepy import concatenate_audioclips
-    final_video = final_video.with_audio(concatenate_audioclips([audio, cta_audio]))
+    silence_path = os.path.join(os.path.dirname(__file__), "assets", "silence.mp3")
+    if not os.path.exists(silence_path):
+        from moviepy import AudioClip
+        silence = AudioClip(lambda t: 0, duration=cta_duration, fps=22050)
+        silence.write_audiofile(silence_path, logger=None)
+    silence_audio = AudioFileClip(silence_path)
+    final_video = final_video.with_audio(concatenate_audioclips([audio, silence_audio]))
     final_video = final_video.resized(height=720)
 
     print(f"[+] Writing video to {output_path}...")
@@ -413,7 +424,7 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
         codec="libx264",
         audio_codec="aac",
         fps=30,
-        bitrate="5000k",
+        bitrate="8000k",
         preset="medium",
         threads=4,
     )
@@ -424,22 +435,18 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
     return output_path
 
 
-def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
+def create_shorts(news_items, script, output_path="gadget_shorts.mp4"):
     from moviepy import (
-        ImageClip,
-        AudioFileClip,
-        TextClip,
-        CompositeVideoClip,
-        concatenate_videoclips,
+        ImageClip, AudioFileClip, TextClip,
+        CompositeVideoClip, concatenate_videoclips,
     )
 
     os.makedirs(os.path.join(os.path.dirname(__file__), "assets"), exist_ok=True)
 
-    print("[+] Generating Shorts voiceover...")
+    print("[+] Generating Shorts voiceover with neural TTS...")
     short_script = script[:800]
-    tts = gTTS(text=short_script, lang="en", slow=False)
     audio_path = os.path.join(os.path.dirname(__file__), "assets", "shorts_narration.mp3")
-    tts.save(audio_path)
+    _generate_narration(short_script, audio_path)
     audio = AudioFileClip(audio_path)
     audio_duration = audio.duration
 
@@ -447,7 +454,8 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
     segments = []
     seg_dur = audio_duration / max(len(news_items) + 1, 1)
 
-    intro_img_paths = _download_images(["smartphone", "gadget", "mobile"], count=1)
+    print("    Intro...")
+    intro_img_paths = _download_images(["smartphone", "gadget", "mobile"], count=1, title="Gadget News")
     if intro_img_paths:
         intro_bg = _ken_burns_clip(intro_img_paths[0], seg_dur, (W, H))
     else:
@@ -463,8 +471,9 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
     segments.append(CompositeVideoClip([intro_bg, txt_intro]))
 
     for i, item in enumerate(news_items):
-        keywords = _extract_keywords(item["title"], item.get("summary", ""))
-        img_paths = _download_images(keywords, count=1)
+        print(f"    Story {i+1}...")
+        keywords = []
+        img_paths = _download_images(keywords, count=1, title=item["title"])
 
         if img_paths:
             bg_clip = _ken_burns_clip(img_paths[0], seg_dur, (W, H))
@@ -473,12 +482,12 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
                 np.array(Image.new("RGB", (H, W), (20, 20, 50))), duration=seg_dur
             )
 
-        summary = item.get("summary", "")[:120]
-        caption_text = f"Story {i+1}\n{item['title']}\n{summary}"
+        summary = item.get("summary", "")[:150]
+        caption_text = f"{item['title']}\n{summary}"
 
         txt = TextClip(
             text=caption_text,
-            font_size=30, color="white", font=_get_font_path(),
+            font_size=32, color="white", font=_get_font_path(),
             stroke_color="black", stroke_width=2, method="caption",
             size=(W - 60, None),
         ).with_duration(seg_dur).with_position(("center", H - 500)).with_start(0)
@@ -491,7 +500,7 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
     print(f"[+] Writing Shorts to {output_path}...")
     final.write_videofile(
         output_path, codec="libx264", audio_codec="aac",
-        fps=30, bitrate="6000k", preset="medium", threads=4,
+        fps=30, bitrate="8000k", preset="medium", threads=4,
     )
     final.close()
     audio.close()
