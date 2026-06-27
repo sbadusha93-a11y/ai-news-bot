@@ -56,7 +56,6 @@ jobs:
         run: |
           echo "NEWSAPI_KEY=${{ secrets.NEWSAPI_KEY }}" > ai-news-bot/.env
           echo "PEXELS_API_KEY=${{ secrets.PEXELS_API_KEY }}" >> ai-news-bot/.env
-          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> ai-news-bot/.env
 
       - name: Run Gadget News Bot
         run: python ai_news_bot.py --upload --shorts --privacy public

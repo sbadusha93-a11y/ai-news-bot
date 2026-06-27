@@ -241,31 +241,6 @@ def _download_pexels_image(keywords, output_path):
     return None
 
 
-def _download_dalle_image(keywords, output_path):
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    if not api_key:
-        return None
-    prompt = f"Photo-realistic image of {' '.join(keywords[:3])} smartphone mobile gadget technology product shot, high detail, professional photography lighting, 4k"
-    try:
-        import requests as req
-        resp = req.post(
-            "https://api.openai.com/v1/images/generations",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "dall-e-3", "prompt": prompt, "n": 1, "size": "1792x1024"},
-            timeout=60,
-        )
-        if resp.status_code == 200:
-            img_url = resp.json()["data"][0]["url"]
-            img_resp = req.get(img_url, timeout=30)
-            if img_resp.status_code == 200:
-                with open(output_path, "wb") as f:
-                    f.write(img_resp.content)
-                return output_path
-    except Exception:
-        pass
-    return None
-
-
 def _download_images(keywords, count=3):
     output_dir = os.path.join(os.path.dirname(__file__), "assets", "images")
     os.makedirs(output_dir, exist_ok=True)
@@ -274,8 +249,6 @@ def _download_images(keywords, count=3):
     for i in range(count):
         fpath = os.path.join(output_dir, f"photo_{i}.jpg")
         path = _download_pexels_image(keywords, fpath)
-        if path is None:
-            path = _download_dalle_image(keywords, fpath)
         if path is None:
             path = _generate_ai_art_bg(keywords, count=1, output_size=(1280, 720))
             if path:
