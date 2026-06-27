@@ -41,12 +41,16 @@ jobs:
 
       - name: Decode YouTube token from secret (first ever run fallback)
         if: steps.token-cache.outputs.cache-hit != 'true'
+        env:
+          TOKEN_B64: ${{ secrets.YOUTUBE_TOKEN_B64 }}
         run: |
-          echo "${{ secrets.YOUTUBE_TOKEN_B64 }}" | base64 -d > ai-news-bot/youtube_token.pickle
+          python -c "import base64,os; data=os.environ['TOKEN_B64']; open('ai-news-bot/youtube_token.pickle','wb').write(base64.b64decode(data))"
 
       - name: Decode client_secret.json
+        env:
+          CLIENT_SECRET: ${{ secrets.CLIENT_SECRET_JSON }}
         run: |
-          echo "${{ secrets.CLIENT_SECRET_JSON }}" > ai-news-bot/client_secret.json
+          python -c "import os; open('ai-news-bot/client_secret.json','w').write(os.environ['CLIENT_SECRET'])"
 
       - name: Create .env file
         run: |
