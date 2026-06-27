@@ -374,7 +374,7 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
     seg_dur = audio_duration / max(len(news_items) + 1, 1)
 
     intro = ImageClip(
-        Image.new("RGB", (W, H), (10, 10, 35)), duration=seg_dur
+        np.array(Image.new("RGB", (W, H), (10, 10, 35))), duration=seg_dur
     )
     txt_intro = TextClip(
         text="AI NEWS\nTODAY",
@@ -392,7 +392,7 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
             bg_clip = _ken_burns_clip(img_paths[0], seg_dur, (W, H))
         else:
             bg_clip = ImageClip(
-                Image.new("RGB", (W, H), (20, 20, 50)), duration=seg_dur
+                np.array(Image.new("RGB", (H, W), (20, 20, 50))), duration=seg_dur
             )
 
         txt = TextClip(
