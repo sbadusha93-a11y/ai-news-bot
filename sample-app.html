@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sample App</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; }
+    h1 { color: #333; }
+    .task { display: flex; gap: 8px; margin: 10px 0; }
+    .task input { flex: 1; padding: 8px; }
+    .task button { padding: 8px 16px; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; justify-content: space-between; padding: 8px; border-bottom: 1px solid #eee; }
+    li.completed { text-decoration: line-through; color: #999; }
+  </style>
+</head>
+<body>
+  <h1>Task Manager</h1>
+  <div class="task">
+    <input id="taskInput" placeholder="Add a new task..." />
+    <button id="addBtn">Add</button>
+  </div>
+  <ul id="taskList"></ul>
+
+  <script>
+    const input = document.getElementById('taskInput');
+    const addBtn = document.getElementById('addBtn');
+    const list = document.getElementById('taskList');
+
+    addBtn.addEventListener('click', () => {
+      const text = input.value.trim();
+      if (!text) return;
+      const li = document.createElement('li');
+      li.textContent = text;
+      const doneBtn = document.createElement('button');
+      doneBtn.textContent = 'Done';
+      doneBtn.addEventListener('click', () => li.classList.toggle('completed'));
+      li.appendChild(doneBtn);
+      list.appendChild(li);
+      input.value = '';
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+.playwright-mcp/
+ai-news-bot/.env
+ai-news-bot/client_secret.json
+ai-news-bot/client_secret_*.json
+ai-news-bot/youtube_token.pickle
+ai-news-bot/assets/
+ai-news-bot/logs/
+ai-news-bot/*.mp4
+ai-news-bot/__pycache__/
+ai-news-bot/**/__pycache__/
+*.pyc
+node_modules/
+playwright-report/
+test-results/
+bot_output.txt
+bot_error.txt
