@@ -2,6 +2,7 @@ import os
 import re
 import random
 import textwrap
+import requests
 from gtts import gTTS
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
@@ -213,9 +214,76 @@ def _generate_ai_art_bg(keywords, count=3, output_size=(1280, 720)):
     return paths
 
 
+def _download_pexels_image(keywords, output_path):
+    api_key = os.getenv("PEXELS_API_KEY", "")
+    if not api_key:
+        return None
+    query = " ".join(keywords[:3]) + " smartphone technology"
+    try:
+        resp = requests.get(
+            "https://api.pexels.com/v1/search",
+            headers={"Authorization": api_key},
+            params={"query": query, "per_page": 5, "orientation": "landscape"},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            photos = resp.json().get("photos", [])
+            if photos:
+                photo = random.choice(photos)
+                img_url = photo["src"]["large"]
+                img_resp = requests.get(img_url, timeout=15)
+                if img_resp.status_code == 200:
+                    with open(output_path, "wb") as f:
+                        f.write(img_resp.content)
+                    return output_path
+    except Exception:
+        pass
+    return None
+
+
+def _download_dalle_image(keywords, output_path):
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        return None
+    prompt = f"Photo-realistic image of {' '.join(keywords[:3])} smartphone mobile gadget technology product shot, high detail, professional photography lighting, 4k"
+    try:
+        import requests as req
+        resp = req.post(
+            "https://api.openai.com/v1/images/generations",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": "dall-e-3", "prompt": prompt, "n": 1, "size": "1792x1024"},
+            timeout=60,
+        )
+        if resp.status_code == 200:
+            img_url = resp.json()["data"][0]["url"]
+            img_resp = req.get(img_url, timeout=30)
+            if img_resp.status_code == 200:
+                with open(output_path, "wb") as f:
+                    f.write(img_resp.content)
+                return output_path
+    except Exception:
+        pass
+    return None
+
+
 def _download_images(keywords, count=3):
-    img_paths = _generate_ai_art_bg(keywords, count)
-    return img_paths
+    output_dir = os.path.join(os.path.dirname(__file__), "assets", "images")
+    os.makedirs(output_dir, exist_ok=True)
+    img_paths = []
+
+    for i in range(count):
+        fpath = os.path.join(output_dir, f"photo_{i}.jpg")
+        path = _download_pexels_image(keywords, fpath)
+        if path is None:
+            path = _download_dalle_image(keywords, fpath)
+        if path is None:
+            path = _generate_ai_art_bg(keywords, count=1, output_size=(1280, 720))
+            if path:
+                path = path[0]
+        if path:
+            img_paths.append(path)
+
+    return img_paths[:count]
 
 
 def _get_font_path():
@@ -298,8 +366,12 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
     segment_duration = audio_duration / (len(news_items) + 1)
     W, H = 1280, 720
 
-    intro_img = create_text_image("AI News Update\nTop Stories Today", bg_color=(10, 10, 35))
-    intro_clip = ImageClip(intro_img, duration=segment_duration).with_fps(24)
+    intro_img_path = _download_images(["smartphone", "gadget", "technology"], count=1)
+    if intro_img_path:
+        intro_clip = _ken_burns_clip(intro_img_path[0], segment_duration, (W, H))
+    else:
+        intro_img = create_text_image("Gadget News Update\nTop Stories Today", bg_color=(10, 10, 35))
+        intro_clip = ImageClip(intro_img, duration=segment_duration).with_fps(24)
     segments.append(intro_clip)
 
     for item in news_items:
@@ -373,11 +445,15 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
     segments = []
     seg_dur = audio_duration / max(len(news_items) + 1, 1)
 
-    intro = ImageClip(
-        np.array(Image.new("RGB", (W, H), (10, 10, 35))), duration=seg_dur
-    )
+    intro_img_paths = _download_images(["smartphone", "gadget", "mobile"], count=1)
+    if intro_img_paths:
+        intro = _ken_burns_clip(intro_img_paths[0], seg_dur, (W, H))
+    else:
+        intro = ImageClip(
+            np.array(Image.new("RGB", (W, H), (10, 10, 35))), duration=seg_dur
+        )
     txt_intro = TextClip(
-        text="AI NEWS\nTODAY",
+        text="GADGET\nNEWS",
         font_size=80, color="white", font=_get_font_path(),
         stroke_color="black", stroke_width=3, method="caption",
         size=(W - 80, None),
