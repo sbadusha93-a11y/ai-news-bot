@@ -161,7 +161,7 @@ def main():
 
         if video_id:
             print(f"\n[SUCCESS] Published at: https://youtu.be/{video_id}")
-            thumb_path = generate_thumbnail(news[0]["title"] if news else "AI News")
+            thumb_path = generate_thumbnail(news[0]["title"] if news else "Gadget News")
             upload_thumbnail(video_id, thumb_path)
 
             if args.shorts and os.path.exists(shorts_path):
@@ -174,7 +174,7 @@ def main():
                 )
                 if shorts_id:
                     print(f"    Shorts: https://youtu.be/{shorts_id}")
-            thumb_path = generate_thumbnail(news[0]["title"] if news else "Gadget News")
+                    thumb_path = generate_thumbnail(news[0]["title"] if news else "Gadget News")
                     upload_thumbnail(shorts_id, thumb_path)
         else:
             print("\n Upload skipped or failed.")
