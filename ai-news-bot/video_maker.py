@@ -230,7 +230,7 @@ def _download_pexels_image(keywords, output_path):
             photos = resp.json().get("photos", [])
             if photos:
                 photo = random.choice(photos)
-                img_url = photo["src"]["large"]
+                img_url = photo["src"]["large2x"]
                 img_resp = requests.get(img_url, timeout=15)
                 if img_resp.status_code == 200:
                     with open(output_path, "wb") as f:
@@ -341,15 +341,23 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
 
     intro_img_path = _download_images(["smartphone", "gadget", "technology"], count=1)
     if intro_img_path:
-        intro_clip = _ken_burns_clip(intro_img_path[0], segment_duration, (W, H))
+        intro_bg = _ken_burns_clip(intro_img_path[0], segment_duration, (W, H))
     else:
-        intro_img = create_text_image("Gadget News Update\nTop Stories Today", bg_color=(10, 10, 35))
-        intro_clip = ImageClip(intro_img, duration=segment_duration).with_fps(24)
-    segments.append(intro_clip)
+        intro_bg_img = create_text_image("Gadget News Update\nTop Stories Today", bg_color=(10, 10, 35))
+        intro_bg = ImageClip(intro_bg_img, duration=segment_duration).with_fps(24)
 
-    for item in news_items:
+    intro_txt = TextClip(
+        text="GADGET NEWS\nTop Stories Today",
+        font_size=48, color="white", font=_get_font_path(),
+        stroke_color="black", stroke_width=3, method="caption",
+        size=(W - 100, None),
+    ).with_duration(segment_duration).with_position("center").with_start(0)
+
+    segments.append(CompositeVideoClip([intro_bg, intro_txt], size=(W, H)).with_duration(segment_duration))
+
+    for i, item in enumerate(news_items):
         keywords = _extract_keywords(item["title"], item.get("summary", ""))
-        img_paths = _download_images(keywords, count=2)
+        img_paths = _download_images(keywords, count=1)
 
         if img_paths:
             bg = _ken_burns_clip(img_paths[0], segment_duration, (W, H))
@@ -357,16 +365,20 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
             txt_img = create_text_image(item["title"], bg_color=(20, 20, 50))
             bg = ImageClip(txt_img, duration=segment_duration).with_fps(24)
 
+        story_num = i + 1
+        summary = item.get("summary", "")[:150]
+        caption_text = f"Story {story_num}\n{item['title']}\n{summary}"
+
         txt_clip = TextClip(
-            text=item["title"],
-            font_size=28,
+            text=caption_text,
+            font_size=24,
             color="white",
             stroke_color="black",
             stroke_width=2,
             font=_get_font_path(),
             method="caption",
-            size=(1200, None),
-        ).with_duration(segment_duration).with_position(("center", "bottom")).with_start(0)
+            size=(W - 80, None),
+        ).with_duration(segment_duration).with_position(("center", 80)).with_start(0)
 
         scene = CompositeVideoClip([bg, txt_clip], size=(W, H)).with_duration(segment_duration)
         segments.append(scene)
@@ -383,9 +395,9 @@ def create_news_video(news_items, script, output_path="ai_news_video.mp4"):
         output_path,
         codec="libx264",
         audio_codec="aac",
-        fps=24,
-        bitrate="2000k",
-        preset="ultrafast",
+        fps=30,
+        bitrate="5000k",
+        preset="medium",
         threads=4,
     )
 
@@ -420,9 +432,9 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
 
     intro_img_paths = _download_images(["smartphone", "gadget", "mobile"], count=1)
     if intro_img_paths:
-        intro = _ken_burns_clip(intro_img_paths[0], seg_dur, (W, H))
+        intro_bg = _ken_burns_clip(intro_img_paths[0], seg_dur, (W, H))
     else:
-        intro = ImageClip(
+        intro_bg = ImageClip(
             np.array(Image.new("RGB", (W, H), (10, 10, 35))), duration=seg_dur
         )
     txt_intro = TextClip(
@@ -431,9 +443,9 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
         stroke_color="black", stroke_width=3, method="caption",
         size=(W - 80, None),
     ).with_duration(seg_dur).with_position("center").with_start(0)
-    segments.append(CompositeVideoClip([intro, txt_intro]))
+    segments.append(CompositeVideoClip([intro_bg, txt_intro]))
 
-    for item in news_items:
+    for i, item in enumerate(news_items):
         keywords = _extract_keywords(item["title"], item.get("summary", ""))
         img_paths = _download_images(keywords, count=1)
 
@@ -444,12 +456,15 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
                 np.array(Image.new("RGB", (H, W), (20, 20, 50))), duration=seg_dur
             )
 
+        summary = item.get("summary", "")[:120]
+        caption_text = f"Story {i+1}\n{item['title']}\n{summary}"
+
         txt = TextClip(
-            text=item["title"],
-            font_size=36, color="white", font=_get_font_path(),
+            text=caption_text,
+            font_size=30, color="white", font=_get_font_path(),
             stroke_color="black", stroke_width=2, method="caption",
             size=(W - 60, None),
-        ).with_duration(seg_dur).with_position(("center", H - 300)).with_start(0)
+        ).with_duration(seg_dur).with_position(("center", H - 500)).with_start(0)
 
         segments.append(CompositeVideoClip([bg_clip, txt], size=(W, H)))
 
@@ -459,7 +474,7 @@ def create_shorts(news_items, script, output_path="ai_shorts.mp4"):
     print(f"[+] Writing Shorts to {output_path}...")
     final.write_videofile(
         output_path, codec="libx264", audio_codec="aac",
-        fps=24, bitrate="3000k", preset="ultrafast", threads=4,
+        fps=30, bitrate="6000k", preset="medium", threads=4,
     )
     final.close()
     audio.close()
