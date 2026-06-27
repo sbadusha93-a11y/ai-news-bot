@@ -45,10 +45,10 @@ Write-Host ""
 Write-Host "Go to: GitHub Repo -> Settings -> Secrets and variables -> Actions"
 Write-Host ""
 Write-Host "Add these repository secrets:" -ForegroundColor Yellow
-Write-Host "  $(if ($newsKey) { '✓' } else { '✗' }) NEWSAPI_KEY    = $($newsKey ? $newsKey : '(from your .env file)')"
-Write-Host "  $(if ($pexelsKey) { '✓' } else { '✗' }) PEXELS_API_KEY = $($pexelsKey ? $pexelsKey : '(from your .env file)')"
-Write-Host "  $(if (Test-Path $csPath) { '✓' } else { '✗' }) CLIENT_SECRET_JSON = (paste JSON from step 1 - all on one line)"
-Write-Host "  $(if (Test-Path $tkPath) { '✓' } else { '✗' }) YOUTUBE_TOKEN_B64  = (paste base64 from step 2)"
+if ($newsKey) { Write-Host "  [OK] NEWSAPI_KEY    = $newsKey" } else { Write-Host "  [!!] NEWSAPI_KEY    = (missing - check your .env file)" }
+if ($pexelsKey) { Write-Host "  [OK] PEXELS_API_KEY = $pexelsKey" } else { Write-Host "  [!!] PEXELS_API_KEY = (missing - check your .env file)" }
+if (Test-Path $csPath) { Write-Host "  [OK] CLIENT_SECRET_JSON = (shown in step 1 above)" } else { Write-Host "  [!!] CLIENT_SECRET_JSON = (missing)" }
+if (Test-Path $tkPath) { Write-Host "  [OK] YOUTUBE_TOKEN_B64  = (shown in step 2 above)" } else { Write-Host "  [!!] YOUTUBE_TOKEN_B64  = (missing)" }
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "  PUSH TO GITHUB" -ForegroundColor Green
