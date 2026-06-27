@@ -91,6 +91,11 @@ BLOCKED_KEYWORDS = {
     "kid", "kids", "teen", "teens", "teenager", "infant", "toddler",
     "woman", "women", "man", "men", "female", "male", "lady", "ladies",
     "gentleman", "gentlemen", "portrait", "people", "person", "human",
+    "face", "faces", "smile", "smiling", "hair", "eyes", "beard", "mustache",
+    "glasses", "sunglasses", "selfie", "group", "crowd", "audience",
+    "hand", "hands", "arm", "arms", "team", "staff", "employee",
+    "professional", "executive", "doctor", "nurse", "teacher", "student",
+    "customer", "client", "athlete", "player", "coach", "family", "friend",
     "race", "racial", "ethnic", "ethnicity", "skin", "color", "colored",
     "black", "white", "asian", "african", "european", "american", "indian",
     "chinese", "japanese", "korean", "arab", "hispanic", "latino", "latinx",
@@ -102,7 +107,7 @@ BLOCKED_KEYWORDS = {
     "election", "campaign", "vote", "voter", "government",
 }
 
-SAFE_MODIFIERS = ["technology", "digital", "photography", "innovation", "data", "circuit", "network", "cyber", "server", "robot", "future"]
+SAFE_MODIFIERS = ["technology", "digital", "abstract", "innovation", "data", "circuit", "network", "cyber", "server", "robot", "future", "rendering", "hologram", "background"]
 
 def _extract_keywords(title, summary=""):
     import re
@@ -130,104 +135,87 @@ def _extract_keywords(title, summary=""):
     return unique[:3] if unique else ["AI", "technology"]
 
 
-def _download_images(keywords, count=3):
-    import random
-    img_paths = []
-    output_dir = os.path.join(os.path.dirname(__file__), "assets", "images")
-    os.makedirs(output_dir, exist_ok=True)
-
-    pexels_key = os.getenv("PEXELS_API_KEY", "")
-    if pexels_key:
-        for kw in keywords[:2]:
-            safe_kw = kw
-            modifier = random.choice(SAFE_MODIFIERS)
-            query = f"{safe_kw} {modifier}"
-            try:
-                resp = __import__("requests").get(
-                    f"https://api.pexels.com/v1/search?query={query}&per_page=5&orientation=landscape&size=large",
-                    headers={"Authorization": pexels_key},
-                    timeout=10,
-                )
-                if resp.status_code == 200:
-                    photos = resp.json().get("photos", [])
-                    for photo in photos:
-                        alt = (photo.get("alt", "") or "").lower()
-                        if any(b in alt for b in BLOCKED_KEYWORDS):
-                            continue
-                        for size_key in ["original", "large2x", "large"]:
-                            img_url = photo.get("src", {}).get(size_key, "")
-                            if img_url:
-                                break
-                        if not img_url:
-                            continue
-                        img_resp = __import__("requests").get(img_url, timeout=20)
-                        if img_resp.status_code == 200:
-                            fname = f"{safe_kw}_{len(img_paths)}.jpg"
-                            fpath = os.path.join(output_dir, fname)
-                            with open(fpath, "wb") as f:
-                                f.write(img_resp.content)
-                            img_paths.append(fpath)
-                            if len(img_paths) >= count:
-                                return img_paths
-            except Exception:
-                continue
-
-    stock_urls = [
-        "https://images.unsplash.com/photo-1677442136019-21780ecad995?w=1280&h=720&fit=crop",
-        "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=1280&h=720&fit=crop",
-        "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=1280&h=720&fit=crop",
-        "https://images.unsplash.com/photo-1555949963-ff9fe0c870eb?w=1280&h=720&fit=crop",
-        "https://images.unsplash.com/photo-1531746790095-e5cb15765ec7?w=1280&h=720&fit=crop",
-        "https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=1280&h=720&fit=crop",
-        "https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=1280&h=720&fit=crop",
-        "https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1280&h=720&fit=crop",
-        "https://images.unsplash.com/photo-1518432031352-d6fc5c10da5a?w=1280&h=720&fit=crop",
-        "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=1280&h=720&fit=crop",
-    ]
-    for url in stock_urls:
-        try:
-            resp = __import__("requests").get(url, timeout=15, headers={"User-Agent": "Mozilla/5.0"})
-            if resp.status_code == 200:
-                fname = f"stock_{len(img_paths)}.jpg"
-                fpath = os.path.join(output_dir, fname)
-                with open(fpath, "wb") as f:
-                    f.write(resp.content)
-                img_paths.append(fpath)
-                if len(img_paths) >= count:
-                    return img_paths
-        except Exception:
-            continue
-
-    return img_paths or _generate_fallback_images(count)
-
-
-def _generate_fallback_images(count=3):
-    W, H = 1280, 720
+def _generate_ai_art_bg(keywords, count=3, output_size=(1280, 720)):
+    W, H = output_size
     output_dir = os.path.join(os.path.dirname(__file__), "assets", "images")
     os.makedirs(output_dir, exist_ok=True)
     paths = []
     from PIL import Image, ImageDraw
+
+    palette = [
+        {"bg": ((10, 10, 40), (20, 50, 100)), "accent": (0, 120, 255), "glow": (100, 180, 255)},
+        {"bg": ((20, 5, 40), (60, 20, 90)), "accent": (180, 50, 255), "glow": (220, 150, 255)},
+        {"bg": ((5, 20, 35), (10, 60, 80)), "accent": (0, 200, 150), "glow": (100, 255, 200)},
+        {"bg": ((30, 10, 20), (80, 20, 50)), "accent": (255, 80, 80), "glow": (255, 150, 150)},
+        {"bg": ((5, 15, 45), (15, 40, 100)), "accent": (60, 140, 255), "glow": (150, 200, 255)},
+    ]
+
     for i in range(count):
-        colors = [
-            ((10, 10, 35), (30, 60, 120)),
-            ((20, 20, 50), (60, 30, 100)),
-            ((5, 20, 40), (40, 80, 60)),
-            ((30, 10, 50), (80, 40, 100)),
-            ((10, 30, 50), (50, 100, 140)),
-        ]
-        (r1, g1, b1), (r2, g2, b2) = random.choice(colors)
+        scheme = random.choice(palette)
+        (r1, g1, b1), (r2, g2, b2) = scheme["bg"]
+        accent = scheme["accent"]
+        glow = scheme["glow"]
+
         img = Image.new("RGB", (W, H), (r1, g1, b1))
         draw = ImageDraw.Draw(img)
+
         for y in range(H):
             blend = y / H
             cr = int(r1 + (r2 - r1) * blend)
             cg = int(g1 + (g2 - g1) * blend)
             cb = int(b1 + (b2 - b1) * blend)
             draw.line([(0, y), (W, y)], fill=(cr, cg, cb))
-        fpath = os.path.join(output_dir, f"fallback_{i}.jpg")
-        img.save(fpath, quality=90)
+
+        grid_size = random.randint(40, 80)
+        for x in range(0, W, grid_size):
+            for y in range(0, H, grid_size):
+                if random.random() < 0.15:
+                    color = (
+                        random.randint(accent[0] - 30, accent[0] + 30),
+                        random.randint(accent[1] - 30, accent[1] + 30),
+                        random.randint(accent[2] - 30, accent[2] + 30),
+                    )
+                    color = tuple(max(0, min(255, c)) for c in color)
+                    draw.rectangle([x, y, x + grid_size - 2, y + grid_size - 2],
+                                   fill=color, outline=None)
+
+        for _ in range(random.randint(3, 6)):
+            cx = random.randint(50, W - 50)
+            cy = random.randint(50, H - 50)
+            r = random.randint(15, 40)
+            for ring in range(r, 0, -3):
+                alpha = int(60 * (1 - ring / r))
+                color = tuple(
+                    max(0, min(255, int(c + (glow[i] - c) * (1 - ring / r))))
+                    for i, c in enumerate(accent)
+                )
+                draw.ellipse([cx - ring, cy - ring, cx + ring, cy + ring],
+                             fill=color, outline=None)
+
+        if random.random() < 0.6:
+            line_count = random.randint(3, 8)
+            for _ in range(line_count):
+                x1 = random.randint(0, W)
+                y1 = random.randint(0, H)
+                x2 = x1 + random.randint(-200, 200)
+                y2 = y1 + random.randint(-200, 200)
+                line_color = (
+                    random.randint(accent[0] - 20, accent[0] + 20),
+                    random.randint(accent[1] - 20, accent[1] + 20),
+                    random.randint(accent[2] - 20, accent[2] + 20),
+                )
+                line_color = tuple(max(0, min(255, c)) for c in line_color)
+                draw.line([(x1, y1), (x2, y2)], fill=line_color, width=random.randint(1, 3))
+
+        fpath = os.path.join(output_dir, f"ai_art_{i}.jpg")
+        img.save(fpath, quality=92)
         paths.append(fpath)
     return paths
+
+
+def _download_images(keywords, count=3):
+    img_paths = _generate_ai_art_bg(keywords, count)
+    return img_paths
 
 
 def _get_font_path():
