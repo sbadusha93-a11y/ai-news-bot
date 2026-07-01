@@ -45,5 +45,5 @@ jobs:
           echo "PEXELS_API_KEY=${{ secrets.PEXELS_API_KEY }}" > tech-bot/.env
 
       - name: Run Tech Content Bot
-        run: python tech_bot.py --format ${{ github.event.inputs.format || 'random' }} --upload --privacy public
+        run: python tech_bot.py --format ${{ github.event.inputs.format || 'random' }} --upload --privacy private
         working-directory: tech-bot

@@ -79,7 +79,7 @@ def main():
                         help="Generate N YouTube Shorts from tech tips pool (default: 0)")
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--video", default=None)
-    parser.add_argument("--privacy", choices=["public", "unlisted", "private"], default="public")
+    parser.add_argument("--privacy", choices=["public", "unlisted", "private"], default="private")
     parser.add_argument("--output", default=None)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
