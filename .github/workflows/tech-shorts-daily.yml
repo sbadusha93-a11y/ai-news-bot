@@ -1,0 +1,46 @@
+name: Daily Tech Shorts
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  generate-shorts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: tech-bot/requirements.txt
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r tech-bot/requirements.txt
+
+      - name: Create .env file
+        run: |
+          echo "PEXELS_API_KEY=${{ secrets.PEXELS_API_KEY }}" > tech-bot/.env
+
+      - name: Generate 2 Tech Shorts
+        run: python tech_bot.py --shorts 2
+        working-directory: tech-bot
+
+      - name: Upload Shorts as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tech-shorts-${{ github.run_id }}
+          path: tech-bot/Short_*.mp4
+          retention-days: 7
