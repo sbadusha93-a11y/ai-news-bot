@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    container_name: coindcx-bot
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      - COINDCX_API_KEY=${COINDCX_API_KEY}
+      - COINDCX_API_SECRET=${COINDCX_API_SECRET}
+      - DATABASE_URL=postgresql+asyncpg://botuser:botpass@postgres:5432/coindcx_bot
+      - REDIS_URL=redis://redis:6379/0
+      - BOT_MODE=${BOT_MODE:-paper}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    ports:
+      - "8000:8000"
+    networks:
+      - bot-network
+
+  dashboard:
+    build: .
+    container_name: coindcx-dashboard
+    restart: unless-stopped
+    depends_on:
+      - bot
+    environment:
+      - DASHBOARD_USERNAME=${DASHBOARD_USERNAME:-admin}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-admin}
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8501:8501"
+    command: streamlit run src/dashboard/app.py --server.port=8501 --server.address=0.0.0.0
+    networks:
+      - bot-network
+
+  api:
+    build: .
+    container_name: coindcx-api
+    restart: unless-stopped
+    depends_on:
+      - bot
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8001:8000"
+    command: uvicorn src.api.server:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - bot-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: coindcx-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: botuser
+      POSTGRES_PASSWORD: botpass
+      POSTGRES_DB: coindcx_bot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U botuser -d coindcx_bot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bot-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: coindcx-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - bot-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  bot-network:
+    driver: bridge

@@ -1,0 +1,84 @@
+{
+  "bot": {
+    "name": "CoinDCX Pro Bot",
+    "version": "2.0.0",
+    "mode": "paper",
+    "auto_trade": false,
+    "max_positions": 3,
+    "max_positions_per_coin": 1,
+    "min_confidence": 90,
+    "min_rr": 3.0,
+    "leverage": 1,
+    "trade_direction": "both"
+  },
+  "timeframes": {
+    "primary": "4h",
+    "confirmation": ["1d", "1h", "15m"],
+    "scan_interval": 900
+  },
+  "coin_selection": {
+    "min_volume_usdt": 50000,
+    "max_coins_to_scan": 10,
+    "top_n_ranked": 10,
+    "trade_top_n": 3,
+    "blacklist": [],
+    "whitelist": [],
+    "min_price": 0.000001,
+    "max_price": 100000,
+    "min_liquidity_score": 50
+  },
+  "strategy_weights": {
+    "trend": 25,
+    "momentum": 20,
+    "volume": 20,
+    "smc": 15,
+    "price_action": 10,
+    "sentiment": 10
+  },
+  "risk": {
+    "max_risk_per_trade": 1.0,
+    "max_daily_risk": 5.0,
+    "max_weekly_risk": 15.0,
+    "max_drawdown": 20.0,
+    "max_consecutive_losses": 3,
+    "stop_loss_atr_multiplier": 2.0,
+    "trailing_stop_activation": 1.5,
+    "trailing_stop_distance": 0.5,
+    "break_even_trigger": 2.0,
+    "take_profit_levels": [
+      {"level": 1, "ratio": 3.0, "size": 0.3},
+      {"level": 2, "ratio": 5.0, "size": 0.3},
+      {"level": 3, "ratio": 8.0, "size": 0.4}
+    ],
+    "auto_pause_after_losses": true,
+    "pause_duration_minutes": 60
+  },
+  "indicator_settings": {
+    "rsi_period": 14,
+    "stoch_rsi_period": 14,
+    "macd_fast": 12,
+    "macd_slow": 26,
+    "macd_signal": 9,
+    "ema_periods": [9, 20, 50, 100, 200],
+    "bollinger_period": 20,
+    "bollinger_std": 2,
+    "atr_period": 14,
+    "adx_period": 14,
+    "cci_period": 20,
+    "roc_period": 12,
+    "momentum_period": 10,
+    "supertrend_period": 10,
+    "supertrend_multiplier": 3,
+    "ichimoku_conversion": 9,
+    "ichimoku_base": 26,
+    "ichimoku_span": 52,
+    "donchian_period": 20,
+    "keltner_period": 20,
+    "keltner_atr_multiplier": 2,
+    "vwap_period": 20,
+    "cmf_period": 20,
+    "mfi_period": 14,
+    "volume_oscillator_fast": 5,
+    "volume_oscillator_slow": 20
+  }
+}

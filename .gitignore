@@ -14,3 +14,12 @@ playwright-report/
 test-results/
 bot_output.txt
 bot_error.txt
+
+# coindcx-bot
+coindcx-bot/.env
+coindcx-bot/.playwright-mcp/
+coindcx-bot/data/bot.db
+coindcx-bot/logs/
+coindcx-bot/__pycache__/
+coindcx-bot/**/__pycache__/
+coindcx-bot/start_dashboard.vbs

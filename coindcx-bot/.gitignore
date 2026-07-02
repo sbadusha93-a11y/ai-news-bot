@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Environment
+.env
+*.env.local
+
+# Data
+data/historical/*
+data/models/*
+!data/historical/.gitkeep
+!data/models/.gitkeep
+
+# Logs
+logs/*
+!logs/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.docker/
+
+# ML Models
+*.h5
+*.pt
+*.pth
+*.pkl
+*.joblib
+*.onnx
+
+# Credentials
+*credentials*
+*secret*
+*key*.json
+*.pem

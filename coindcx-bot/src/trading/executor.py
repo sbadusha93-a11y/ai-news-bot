@@ -1,0 +1,221 @@
+import asyncio
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from loguru import logger
+
+from src.config import bot_config, settings
+from src.exchange.coindcx import CoinDCXExchange
+from src.risk.manager import RiskManager
+from src.risk.sizing import PositionSizer
+
+
+class TradeExecutor:
+    def __init__(
+        self,
+        exchange: CoinDCXExchange,
+        risk_manager: RiskManager,
+        position_sizer: PositionSizer,
+    ):
+        self.exchange = exchange
+        self.risk_manager = risk_manager
+        self.position_sizer = position_sizer
+        self.active_positions: Dict[str, Dict] = {}
+        self.config = bot_config["bot"]
+
+    async def execute_trade(
+        self,
+        symbol: str,
+        direction: str,
+        entry_price: float,
+        confidence: float,
+        quality_score: float,
+        reason: str,
+        df: Any = None,
+    ) -> Optional[Dict]:
+        if not self.risk_manager.can_trade():
+            logger.warning(f"Cannot trade {symbol}: risk limits exceeded")
+            return None
+
+        if len(self.active_positions) >= self.config["max_positions"]:
+            logger.warning(f"Max positions ({self.config['max_positions']}) reached")
+            return None
+
+        atr = df.iloc[-1].get("atr", 0) if df is not None else 0
+        stop_loss = self.position_sizer.calculate_stop_loss(
+            entry_price, atr, direction
+        )
+        take_profits = self.position_sizer.calculate_take_profits(
+            entry_price, stop_loss, direction
+        )
+
+        rr_1 = abs(take_profits[1] - entry_price) / abs(entry_price - stop_loss)
+        if rr_1 < bot_config["bot"]["min_rr"]:
+            logger.warning(f"{symbol}: Risk reward {rr_1:.2f} below minimum {bot_config['bot']['min_rr']}")
+            return None
+
+        pos_size = self.position_sizer.calculate_position_size(
+            entry_price, stop_loss
+        )
+
+        if "error" in pos_size:
+            logger.error(f"Position sizing error for {symbol}: {pos_size['error']}")
+            return None
+
+        if settings.bot_mode == "paper":
+            trade = await self._execute_paper_trade(
+                symbol, direction, entry_price, stop_loss,
+                take_profits, pos_size, confidence, quality_score, reason,
+            )
+        else:
+            trade = await self._execute_live_trade(
+                symbol, direction, entry_price, stop_loss,
+                take_profits, pos_size, confidence, quality_score, reason,
+            )
+
+        if trade:
+            self.active_positions[symbol] = trade
+            logger.info(f"Trade opened: {direction.upper()} {symbol} @ {entry_price}")
+
+        return trade
+
+    async def _execute_paper_trade(
+        self,
+        symbol: str,
+        direction: str,
+        entry_price: float,
+        stop_loss: float,
+        take_profits: Dict,
+        pos_size: Dict,
+        confidence: float,
+        quality_score: float,
+        reason: str,
+    ) -> Dict:
+        return {
+            "symbol": symbol,
+            "side": direction,
+            "entry_price": entry_price,
+            "quantity": pos_size["position_size"],
+            "stop_loss": stop_loss,
+            "take_profit_1": take_profits.get(1, 0),
+            "take_profit_2": take_profits.get(2, 0),
+            "take_profit_3": take_profits.get(3, 0),
+            "leverage": self.config["leverage"],
+            "confidence_score": confidence,
+            "trade_quality_score": quality_score,
+            "risk_score": 100 - min(quality_score, 100),
+            "reason_entry": reason,
+            "status": "open",
+            "entry_time": datetime.utcnow().isoformat(),
+            "highest_price": entry_price if direction == "long" else 0,
+            "lowest_price": entry_price if direction == "short" else float("inf"),
+            "trailing_stop_active": False,
+            "break_even_active": False,
+            "is_paper": True,
+        }
+
+    async def _execute_live_trade(
+        self,
+        symbol: str,
+        direction: str,
+        entry_price: float,
+        stop_loss: float,
+        take_profits: Dict,
+        pos_size: Dict,
+        confidence: float,
+        quality_score: float,
+        reason: str,
+    ) -> Optional[Dict]:
+        try:
+            order = await self.exchange.create_order(
+                symbol, "limit", direction,
+                pos_size["position_size"], entry_price,
+            )
+            if not order:
+                logger.error(f"Failed to place order for {symbol}")
+                return None
+
+            return {
+                "symbol": symbol,
+                "side": direction,
+                "entry_price": entry_price,
+                "quantity": pos_size["position_size"],
+                "stop_loss": stop_loss,
+                "take_profit_1": take_profits.get(1, 0),
+                "take_profit_2": take_profits.get(2, 0),
+                "take_profit_3": take_profits.get(3, 0),
+                "leverage": self.config["leverage"],
+                "order_id": order.get("id", ""),
+                "confidence_score": confidence,
+                "trade_quality_score": quality_score,
+                "reason_entry": reason,
+                "status": "open",
+                "entry_time": datetime.utcnow().isoformat(),
+                "highest_price": entry_price if direction == "long" else 0,
+                "lowest_price": entry_price if direction == "short" else float("inf"),
+                "trailing_stop_active": False,
+                "break_even_active": False,
+                "is_paper": False,
+            }
+        except Exception as e:
+            logger.error(f"Live trade execution failed for {symbol}: {e}")
+            return None
+
+    async def close_trade(
+        self, symbol: str, exit_price: float, reason: str = "manual"
+    ) -> Optional[Dict]:
+        position = self.active_positions.pop(symbol, None)
+        if not position:
+            logger.warning(f"No active position for {symbol}")
+            return None
+
+        direction = position["side"]
+        entry_price = position["entry_price"]
+        quantity = position["quantity"]
+
+        if direction == "long":
+            pnl = (exit_price - entry_price) * quantity
+            pnl_percent = (exit_price / entry_price - 1) * 100
+        else:
+            pnl = (entry_price - exit_price) * quantity
+            pnl_percent = (1 - exit_price / entry_price) * 100
+
+        trade_result = {
+            **position,
+            "exit_price": exit_price,
+            "exit_time": datetime.utcnow().isoformat(),
+            "pnl": round(pnl, 2),
+            "pnl_percent": round(pnl_percent, 2),
+            "reason_exit": reason,
+            "status": "closed",
+        }
+
+        self.risk_manager.record_trade(trade_result)
+
+        if settings.bot_mode == "live":
+            try:
+                await self.exchange.create_order(
+                    symbol, "market",
+                    "sell" if direction == "long" else "buy",
+                    quantity,
+                )
+            except Exception as e:
+                logger.error(f"Failed to close live position for {symbol}: {e}")
+
+        logger.info(f"Trade closed: {direction.upper()} {symbol} PnL: ${pnl:.2f} ({pnl_percent:.2f}%)")
+        return trade_result
+
+    async def close_all_positions(self, reason: str = "emergency"):
+        results = []
+        symbols = list(self.active_positions.keys())
+        for symbol in symbols:
+            result = await self.close_trade(symbol, 0, reason)
+            if result:
+                results.append(result)
+        return results
+
+    def get_active_positions(self) -> List[Dict]:
+        return list(self.active_positions.values())
+
+    def get_position_count(self) -> int:
+        return len(self.active_positions)
