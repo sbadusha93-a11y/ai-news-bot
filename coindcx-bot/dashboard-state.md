@@ -1,0 +1,103 @@
+- generic [ref=f3e2]:
+  - generic [ref=f3e61]:
+    - button "keyboard_double_arrow_left" [ref=f3e64] [cursor=pointer]:
+      - generic [ref=f3e66]: keyboard_double_arrow_left
+    - generic [ref=f3e69]:
+      - heading "🤖 CoinDCX Pro Bot" [level=1] [ref=f3e73]
+      - separator [ref=f3e78]
+      - generic [ref=f3e80]:
+        - paragraph [ref=f3e84]: Navigation
+        - radiogroup "Navigation" [ref=f3e85] [cursor=pointer]:
+          - generic [ref=f3e86]:
+            - radio "Dashboard" [checked]
+            - paragraph [ref=f3e91]: Dashboard
+          - generic [ref=f3e92]:
+            - radio "Active Positions"
+            - paragraph [ref=f3e97]: Active Positions
+          - generic [ref=f3e98]:
+            - radio "Trade History"
+            - paragraph [ref=f3e103]: Trade History
+          - generic [ref=f3e104]:
+            - radio "Market Scanner"
+            - paragraph [ref=f3e109]: Market Scanner
+          - generic [ref=f3e110]:
+            - radio "Backtest"
+            - paragraph [ref=f3e115]: Backtest
+          - generic [ref=f3e116]:
+            - radio "Performance"
+            - paragraph [ref=f3e121]: Performance
+          - generic [ref=f3e122]:
+            - radio "Settings"
+            - paragraph [ref=f3e127]: Settings
+      - separator [ref=f3e226]
+      - status [ref=f3e229]:
+        - generic [ref=f3e232]:
+          - paragraph [ref=f3e233]:
+            - strong [ref=f3e234]: "Bot Status:"
+            - text: Running 🟢
+          - paragraph [ref=f3e235]:
+            - strong [ref=f3e236]: "Mode:"
+            - text: PAPER
+          - paragraph [ref=f3e237]:
+            - strong [ref=f3e238]: "Uptime:"
+            - text: Calculating...
+  - generic [ref=f3e3]:
+    - banner [ref=f3e6]:
+      - generic [ref=f3e9]:
+        - button "Deploy" [ref=f3e11] [cursor=pointer]:
+          - generic [ref=f3e13]: Deploy
+        - button "Main menu" [ref=f3e15] [cursor=pointer]:
+          - img [ref=f3e16]
+    - generic [ref=f3e19]:
+      - heading "📊 Trading Dashboard" [level=1] [ref=f3e141]:
+        - text: 📊 Trading Dashboard
+        - generic [ref=f3e142]:
+          - link "Link to heading":
+            - /url: "#trading-dashboard"
+            - img
+      - generic [ref=f3e143]:
+        - generic [ref=f3e148]:
+          - paragraph [ref=f3e151]: Balance
+          - paragraph [ref=f3e154]: $10,000.00
+          - generic [ref=f3e156]:
+            - img [ref=f3e157]
+            - paragraph [ref=f3e161]: +$234.50
+        - generic [ref=f3e166]:
+          - paragraph [ref=f3e169]: Open Positions
+          - paragraph [ref=f3e172]: "2"
+          - generic [ref=f3e174]:
+            - img [ref=f3e175]
+            - paragraph [ref=f3e179]: "0"
+        - generic [ref=f3e184]:
+          - paragraph [ref=f3e187]: Win Rate
+          - paragraph [ref=f3e190]: 68.5%
+          - generic [ref=f3e192]:
+            - img [ref=f3e193]
+            - paragraph [ref=f3e197]: +2.3%
+        - generic [ref=f3e202]:
+          - paragraph [ref=f3e205]: Total PnL
+          - paragraph [ref=f3e208]: +$1,234.50
+          - generic [ref=f3e210]:
+            - img [ref=f3e211]
+            - paragraph [ref=f3e215]: +$156.20
+      - heading "📈 Active Signals" [level=3] [ref=f3e220]:
+        - text: 📈 Active Signals
+        - generic [ref=f3e221]:
+          - link "Link to heading":
+            - /url: "#active-signals"
+            - img
+      - generic [ref=f3e243]:
+        - button "Show/hide columns" [ref=f3e247] [cursor=pointer]:
+          - img [ref=f3e248]
+        - button "Download as CSV" [ref=f3e253] [cursor=pointer]:
+          - img [ref=f3e254]
+        - button "Search" [ref=f3e259] [cursor=pointer]:
+          - img [ref=f3e260]
+        - button "Fullscreen" [ref=f3e265] [cursor=pointer]:
+          - img [ref=f3e266]
+      - heading "📉 Equity Curve" [level=3] [ref=f3e281]:
+        - text: 📉 Equity Curve
+        - generic [ref=f3e282]:
+          - link "Link to heading":
+            - /url: "#equity-curve"
+            - img

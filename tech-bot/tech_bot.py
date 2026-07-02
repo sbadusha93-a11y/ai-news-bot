@@ -82,6 +82,7 @@ def main():
     parser.add_argument("--privacy", choices=["public", "unlisted", "private"], default="private")
     parser.add_argument("--output", default=None)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--save-to", default=os.path.join(os.path.expanduser("~"), "Downloads"), help="Directory to save generated videos")
     args = parser.parse_args()
 
     print("=" * 60)
@@ -98,8 +99,10 @@ def main():
             if args.dry_run:
                 print(f"    Script: {generate_short_script(tip)}")
                 continue
+            save_dir = args.save_to or os.path.dirname(__file__)
+            os.makedirs(save_dir, exist_ok=True)
             output_path = args.output or os.path.join(
-                os.path.dirname(__file__), f"Short_{ts}_{i+1}.mp4",
+                save_dir, f"Short_{ts}_{i+1}.mp4",
             )
             path = create_tech_short(tip, output_path)
             size = os.path.getsize(path) / (1024 * 1024)
@@ -134,8 +137,10 @@ def main():
             return
 
         ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        save_dir = args.save_to or os.path.dirname(__file__)
+        os.makedirs(save_dir, exist_ok=True)
         output_path = args.output or os.path.join(
-            os.path.dirname(__file__), f"Tech_{fmt}_{ts}.mp4",
+            save_dir, f"Tech_{fmt}_{ts}.mp4",
         )
 
         print(f"\n[2/3] Creating HD video...")
@@ -146,28 +151,9 @@ def main():
         file_size = os.path.getsize(video_path) / (1024 * 1024)
         print(f"    Video saved: {video_path} ({file_size:.1f} MB)")
 
-    if args.upload:
-        print(f"\n[3/3] Uploading to YouTube...")
-        from youtube_uploader import upload_video, upload_thumbnail
-        title = _generate_title(content)
-        description = generate_description(content)
-        tags = get_tags(content)
-        video_id = upload_video(
-            video_path=video_path,
-            title=title,
-            description=description,
-            tags=tags,
-            privacy_status=args.privacy,
-        )
-        if video_id:
-            print(f"\n[SUCCESS] Published at: https://youtu.be/{video_id}")
-            thumb_path = generate_thumbnail(content["title"])
-            upload_thumbnail(video_id, thumb_path)
-        else:
-            print("\n Upload skipped or failed.")
-    else:
-        print(f"\n[3/3] Skipped upload (use --upload flag)")
-        print(f"    Preview: {video_path}")
+        print(f"\n[3/3] Generating thumbnail...")
+        thumb_path = generate_thumbnail(content["title"])
+        print(f"    Thumbnail: {thumb_path}")
 
     print("\n[DONE]")
 

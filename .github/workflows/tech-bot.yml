@@ -44,6 +44,13 @@ jobs:
         run: |
           echo "PEXELS_API_KEY=${{ secrets.PEXELS_API_KEY }}" > tech-bot/.env
 
-      - name: Run Tech Content Bot
-        run: python tech_bot.py --format ${{ github.event.inputs.format || 'random' }} --upload --privacy private
+      - name: Generate video
+        run: python tech_bot.py --format ${{ github.event.inputs.format || 'random' }} --save-to ./output
         working-directory: tech-bot
+
+      - name: Upload video as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tech-video-${{ github.run_id }}
+          path: tech-bot/output/*.mp4
+          retention-days: 7

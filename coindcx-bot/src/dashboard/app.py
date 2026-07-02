@@ -212,19 +212,29 @@ async def _scan_markets(ex, max_coins):
 
             score = 0
             if st_dir == "uptrend":
-                score += 1
+                score += 2
+            elif st_dir == "downtrend":
+                score -= 2
             if macd_dir == "bullish":
-                score += 1
+                score += 2
+            elif macd_dir == "bearish":
+                score -= 2
             if rsi > 50:
                 score += 1
+            elif rsi < 50:
+                score -= 1
             if adx > 25:
-                score += 1
+                score += 1 if st_dir == "uptrend" else -1 if st_dir == "downtrend" else 0
             if bos == "bullish_bos":
                 score += 2
+            elif bos == "bearish_bos":
+                score -= 2
             if choch == "bullish_choch":
                 score += 2
+            elif choch == "bearish_choch":
+                score -= 2
 
-            signal = "LONG" if score >= 4 else "SHORT" if score <= -3 else "NEUTRAL"
+            signal = "LONG" if score >= 4 else "SHORT" if score <= -4 else "NEUTRAL"
             conf = min(abs(score) * 15 + 50, 98)
 
             sl = tp1 = tp2 = tp3 = None

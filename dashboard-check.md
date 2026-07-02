@@ -1,0 +1,28 @@
+- generic [ref=f5e3]:
+  - banner [ref=f5e6]:
+    - generic [ref=f5e9]:
+      - button "Deploy" [ref=f5e11] [cursor=pointer]:
+        - generic [ref=f5e13]: Deploy
+      - button "Main menu" [ref=f5e15] [cursor=pointer]:
+        - img [ref=f5e16]
+  - generic [ref=f5e19]:
+    - heading "🤖 CoinDCX Pro Trading Bot" [level=1] [ref=f5e25]:
+      - text: 🤖 CoinDCX Pro Trading Bot
+      - generic [ref=f5e26]:
+        - link "Link to heading":
+          - /url: "#coin-dcx-pro-trading-bot"
+          - img
+    - generic [ref=f5e29]:
+      - generic [ref=f5e31]:
+        - paragraph [ref=f5e35]: Username
+        - textbox "Username" [ref=f5e38]:
+          - /placeholder: ""
+      - generic [ref=f5e40]:
+        - paragraph [ref=f5e44]: Password
+        - generic [ref=f5e46]:
+          - textbox "Password" [ref=f5e47]:
+            - /placeholder: ""
+          - button "Show password text" [ref=f5e48] [cursor=pointer]:
+            - img "Show password text" [ref=f5e49]
+      - button "Login" [ref=f5e54] [cursor=pointer]:
+        - paragraph [ref=f5e58]: Login
