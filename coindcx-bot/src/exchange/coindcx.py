@@ -25,7 +25,9 @@ class CoinDCXExchange:
         self._pair_cache_loaded = False
 
     async def _get_http(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=30)
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=30)
+        return self._http_client
 
     async def _rate_limit(self):
         now = time.time()

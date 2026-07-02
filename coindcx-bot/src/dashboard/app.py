@@ -22,10 +22,7 @@ from src.backtest.engine import BacktestEngine
 _EXCHANGE: Optional[CoinDCXExchange] = None
 
 def _get_exchange():
-    global _EXCHANGE
-    if _EXCHANGE is None:
-        _EXCHANGE = CoinDCXExchange()
-    return _EXCHANGE
+    return CoinDCXExchange()
 
 
 def _get_fetcher():
@@ -184,10 +181,10 @@ async def _scan_markets(ex, max_coins):
                     if s.endswith("USDT") and t.get("volume", 0) > 0}
     sorted_pairs = sorted(usdt_tickers.items(), key=lambda x: x[1]["volume"], reverse=True)[:max_coins]
 
+    all_ohlcv = await asyncio.gather(*[ex.fetch_ohlcv(s, "4h", 200) for s, _ in sorted_pairs])
     results = []
-    for i, (symbol, ticker) in enumerate(sorted_pairs):
+    for i, ((symbol, ticker), ohlcv) in enumerate(zip(sorted_pairs, all_ohlcv)):
         try:
-            ohlcv = await ex.fetch_ohlcv(symbol, "4h", 200)
             if len(ohlcv) < 50:
                 continue
 
