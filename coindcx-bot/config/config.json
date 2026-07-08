@@ -2,7 +2,7 @@
   "bot": {
     "name": "CoinDCX Pro Bot",
     "version": "2.0.0",
-    "mode": "paper",
+    "mode": "live",
     "auto_trade": true,
     "max_positions": 5,
     "max_positions_per_coin": 1,
