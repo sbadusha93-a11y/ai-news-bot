@@ -63,11 +63,11 @@ class CoinDCXBot:
         self.notification = DesktopNotification()
         self.risk_manager = RiskManager()
         self.position_sizer = PositionSizer()
+        self.ml_predictor = MLPredictor()
         self.strategy_engine = StrategyEngine(self.exchange, ml_predictor=self.ml_predictor)
         self.trade_scorer = TradeScorer()
         self.market_analyzer = MarketAnalyzer()
         self.ml_trainer = MLTrainer()
-        self.ml_predictor = MLPredictor()
         self.trade_executor = TradeExecutor(
             self.exchange, self.risk_manager, self.position_sizer
         )
