@@ -3,12 +3,13 @@
     "name": "CoinDCX Pro Bot",
     "version": "2.0.0",
     "mode": "paper",
-    "auto_trade": false,
-    "max_positions": 3,
+    "auto_trade": true,
+    "max_positions": 5,
     "max_positions_per_coin": 1,
-    "min_confidence": 90,
-    "min_rr": 3.0,
-    "leverage": 1,
+    "min_confidence": 85,
+    "min_rr": 2.0,
+    "max_risk_score": 50,
+    "leverage": 5,
     "trade_direction": "both"
   },
   "timeframes": {
@@ -17,10 +18,10 @@
     "scan_interval": 900
   },
   "coin_selection": {
-    "min_volume_usdt": 50000,
-    "max_coins_to_scan": 10,
+    "min_volume_usdt": 10000,
+    "max_coins_to_scan": 20,
     "top_n_ranked": 10,
-    "trade_top_n": 3,
+    "trade_top_n": 5,
     "blacklist": [],
     "whitelist": [],
     "min_price": 0.000001,
@@ -28,12 +29,13 @@
     "min_liquidity_score": 50
   },
   "strategy_weights": {
-    "trend": 25,
-    "momentum": 20,
-    "volume": 20,
-    "smc": 15,
-    "price_action": 10,
-    "sentiment": 10
+    "trend": 22,
+    "momentum": 18,
+    "volume": 18,
+    "smc": 14,
+    "price_action": 9,
+    "sentiment": 9,
+    "ml": 10
   },
   "risk": {
     "max_risk_per_trade": 1.0,

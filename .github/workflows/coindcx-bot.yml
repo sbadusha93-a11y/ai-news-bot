@@ -1,6 +1,10 @@
 name: CoinDCX Pro Bot
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'coindcx-bot/**'
   workflow_dispatch:
     inputs:
       mode:
@@ -12,6 +16,7 @@ on:
           - check
           - deploy-vps
           - deploy-selfhosted
+          - deploy-railway
   schedule:
     - cron: '0 */6 * * *'
 
@@ -59,6 +64,20 @@ jobs:
         run: |
           sleep 10
           curl -sSf http://${{ secrets.VPS_HOST }}:8501/healthz 2>/dev/null && echo "Dashboard OK" || echo "Dashboard may still be starting"
+
+  deploy-railway:
+    if: ${{ github.event_name == 'push' || github.event.inputs.mode == 'deploy-railway' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+      - name: Deploy to Railway
+        run: railway up --service coindcx-bot
+        working-directory: coindcx-bot
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
 
   deploy-selfhosted:
     if: ${{ github.event.inputs.mode == 'deploy-selfhosted' }}

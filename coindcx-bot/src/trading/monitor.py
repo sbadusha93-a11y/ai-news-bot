@@ -24,6 +24,7 @@ class PositionMonitor:
         self._running = False
 
     async def monitor_positions(self, positions: Dict[str, Dict]):
+        prices = {}
         for symbol, position in list(positions.items()):
             try:
                 ticker = await self.exchange.fetch_ticker(symbol)
@@ -33,6 +34,9 @@ class PositionMonitor:
                 current_price = ticker.get("last", 0)
                 if current_price == 0:
                     continue
+                prices[symbol] = current_price
+
+                self.update_trailing_stops({symbol: position}, {symbol: current_price})
 
                 action = self._evaluate_exit(position, current_price)
                 if action:

@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     max_risk_per_trade: float = 1.0
 
     class Config:
-        env_file = ".env"
+        env_file = str(Path(__file__).parent.parent / ".env")
         env_file_encoding = "utf-8"
 
 
@@ -54,3 +54,9 @@ def load_weights() -> dict:
 
 bot_config = load_config()
 indicator_weights = load_weights()
+
+def reload_config():
+    global bot_config, indicator_weights
+    bot_config = load_config()
+    indicator_weights = load_weights()
+    return bot_config

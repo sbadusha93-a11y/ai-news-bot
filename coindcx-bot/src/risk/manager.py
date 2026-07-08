@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -25,7 +25,7 @@ class RiskManager:
 
     def can_trade(self) -> bool:
         if self.is_paused:
-            if self.pause_until and datetime.utcnow() >= self.pause_until:
+            if self.pause_until and datetime.now(timezone.utc) >= self.pause_until:
                 self.is_paused = False
                 self.pause_until = None
                 logger.info("Trading resumed after pause")
@@ -56,7 +56,7 @@ class RiskManager:
         if duration_minutes is None:
             duration_minutes = self.config["pause_duration_minutes"]
         self.is_paused = True
-        self.pause_until = datetime.utcnow() + timedelta(minutes=duration_minutes)
+        self.pause_until = datetime.now(timezone.utc) + timedelta(minutes=duration_minutes)
         logger.warning(f"Trading paused for {duration_minutes} minutes until {self.pause_until}")
 
     def resume_trading(self):

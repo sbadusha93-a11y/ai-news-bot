@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from loguru import logger
@@ -37,11 +37,18 @@ class TradeExecutor:
             logger.warning(f"Cannot trade {symbol}: risk limits exceeded")
             return None
 
+        if symbol in self.active_positions:
+            logger.warning(f"Symbol {symbol} already has an active position, skipping duplicate")
+            return None
+
         if len(self.active_positions) >= self.config["max_positions"]:
             logger.warning(f"Max positions ({self.config['max_positions']}) reached")
             return None
 
-        atr = df.iloc[-1].get("atr", 0) if df is not None else 0
+        atr = 0
+        if df is not None and isinstance(df, dict):
+            last_row = df.get("last_row", {})
+            atr = last_row.get("atr", 0)
         stop_loss = self.position_sizer.calculate_stop_loss(
             entry_price, atr, direction
         )
@@ -49,7 +56,7 @@ class TradeExecutor:
             entry_price, stop_loss, direction
         )
 
-        rr_1 = abs(take_profits[1] - entry_price) / abs(entry_price - stop_loss)
+        rr_1 = abs(take_profits.get(1, entry_price) - entry_price) / max(abs(entry_price - stop_loss), 1e-10)
         if rr_1 < bot_config["bot"]["min_rr"]:
             logger.warning(f"{symbol}: Risk reward {rr_1:.2f} below minimum {bot_config['bot']['min_rr']}")
             return None
@@ -106,9 +113,9 @@ class TradeExecutor:
             "risk_score": 100 - min(quality_score, 100),
             "reason_entry": reason,
             "status": "open",
-            "entry_time": datetime.utcnow().isoformat(),
+            "entry_time": datetime.now(timezone.utc).isoformat(),
             "highest_price": entry_price if direction == "long" else 0,
-            "lowest_price": entry_price if direction == "short" else float("inf"),
+            "lowest_price": entry_price if direction == "short" else 0,
             "trailing_stop_active": False,
             "break_even_active": False,
             "is_paper": True,
@@ -126,6 +133,10 @@ class TradeExecutor:
         quality_score: float,
         reason: str,
     ) -> Optional[Dict]:
+        active = await self.exchange.is_futures_active(symbol)
+        if not active:
+            logger.error(f"{symbol} futures instrument is not active, cannot place live order")
+            return None
         try:
             order = await self.exchange.create_order(
                 symbol, "limit", direction,
@@ -150,9 +161,9 @@ class TradeExecutor:
                 "trade_quality_score": quality_score,
                 "reason_entry": reason,
                 "status": "open",
-                "entry_time": datetime.utcnow().isoformat(),
-                "highest_price": entry_price if direction == "long" else 0,
-                "lowest_price": entry_price if direction == "short" else float("inf"),
+            "entry_time": datetime.now(timezone.utc).isoformat(),
+            "highest_price": entry_price if direction == "long" else 0,
+                "lowest_price": entry_price if direction == "short" else 0,
                 "trailing_stop_active": False,
                 "break_even_active": False,
                 "is_paper": False,
@@ -183,7 +194,7 @@ class TradeExecutor:
         trade_result = {
             **position,
             "exit_price": exit_price,
-            "exit_time": datetime.utcnow().isoformat(),
+            "exit_time": datetime.now(timezone.utc).isoformat(),
             "pnl": round(pnl, 2),
             "pnl_percent": round(pnl_percent, 2),
             "reason_exit": reason,

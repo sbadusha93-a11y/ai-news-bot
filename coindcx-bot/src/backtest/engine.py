@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
+from src.config import bot_config
 from src.indicators.technical import TechnicalIndicators
 from src.indicators.smc import SMCIndicators
 from src.indicators.volume import VolumeIndicators
@@ -58,6 +59,8 @@ class BacktestEngine:
                 direction = position["side"]
                 entry = position["entry_price"]
 
+                tp2 = position.get("take_profit_2", 0)
+                tp3 = position.get("take_profit_3", 0)
                 exit_reason = None
                 exit_price = None
 
@@ -65,15 +68,27 @@ class BacktestEngine:
                     if price <= sl:
                         exit_reason = "stop_loss"
                         exit_price = sl
+                    elif tp3 > 0 and price >= tp3:
+                        exit_reason = "take_profit_3"
+                        exit_price = tp3
+                    elif tp2 > 0 and price >= tp2:
+                        exit_reason = "take_profit_2"
+                        exit_price = tp2
                     elif tp1 > 0 and price >= tp1:
-                        exit_reason = "take_profit"
+                        exit_reason = "take_profit_1"
                         exit_price = tp1
                 else:
                     if price >= sl:
                         exit_reason = "stop_loss"
                         exit_price = sl
+                    elif tp3 > 0 and price <= tp3:
+                        exit_reason = "take_profit_3"
+                        exit_price = tp3
+                    elif tp2 > 0 and price <= tp2:
+                        exit_reason = "take_profit_2"
+                        exit_price = tp2
                     elif tp1 > 0 and price <= tp1:
-                        exit_reason = "take_profit"
+                        exit_reason = "take_profit_1"
                         exit_price = tp1
 
                 if exit_reason:
@@ -104,6 +119,7 @@ class BacktestEngine:
 
             if not position and self.risk_manager.can_trade():
                 last_rows = df.iloc[max(0, i - 50):i + 1]
+                min_rr = bot_config["bot"]["min_rr"]
                 if self._is_bullish_signal(last_rows):
                     atr = current.get("atr", 0)
                     sl = self.position_sizer.calculate_stop_loss(price, atr, "long")
@@ -111,8 +127,8 @@ class BacktestEngine:
                     pos_size = self.position_sizer.calculate_position_size(price, sl)
 
                     if "error" not in pos_size:
-                        rr = abs(tps[1] - price) / abs(price - sl)
-                        if rr >= 3.0:
+                        rr = abs(tps.get(1, price) - price) / abs(price - sl)
+                        if rr >= min_rr:
                             cost = price * pos_size["position_size"]
                             if cost <= balance:
                                 position = {
@@ -122,6 +138,31 @@ class BacktestEngine:
                                     "quantity": pos_size["position_size"],
                                     "stop_loss": sl,
                                     "take_profit_1": tps.get(1, 0),
+                                    "take_profit_2": tps.get(2, 0),
+                                    "take_profit_3": tps.get(3, 0),
+                                    "entry_time": df.index[i],
+                                    "status": "open",
+                                }
+                elif self._is_bearish_signal(last_rows):
+                    atr = current.get("atr", 0)
+                    sl = self.position_sizer.calculate_stop_loss(price, atr, "short")
+                    tps = self.position_sizer.calculate_take_profits(price, sl, "short")
+                    pos_size = self.position_sizer.calculate_position_size(price, sl)
+
+                    if "error" not in pos_size:
+                        rr = abs(price - tps.get(1, price)) / abs(price - sl)
+                        if rr >= min_rr:
+                            cost = price * pos_size["position_size"]
+                            if cost <= balance:
+                                position = {
+                                    "symbol": symbol,
+                                    "side": "short",
+                                    "entry_price": price,
+                                    "quantity": pos_size["position_size"],
+                                    "stop_loss": sl,
+                                    "take_profit_1": tps.get(1, 0),
+                                    "take_profit_2": tps.get(2, 0),
+                                    "take_profit_3": tps.get(3, 0),
                                     "entry_time": df.index[i],
                                     "status": "open",
                                 }
@@ -134,8 +175,9 @@ class BacktestEngine:
             position["pnl"] = pnl
             position["pnl_percent"] = pnl_percent
             position["reason_exit"] = "end_of_backtest"
+            balance += pnl
             self.trades.append(position)
-            self.equity_curve.append(balance + pnl)
+            self.equity_curve.append(balance)
 
         return self._compute_metrics()
 
@@ -152,6 +194,25 @@ class BacktestEngine:
         if last.get("ema_9_20_cross") == "bullish":
             score += 1
         if last.get("bos") == "bullish_bos":
+            score += 1
+        if last.get("volume_spike"):
+            score += 1
+
+        return score >= 4
+
+    def _is_bearish_signal(self, df: pd.DataFrame) -> bool:
+        last = df.iloc[-1]
+        score = 0
+
+        if last.get("st_direction") == "downtrend":
+            score += 1
+        if last.get("macd_signal_line") == "bearish":
+            score += 1
+        if last.get("rsi", 50) < 50:
+            score += 1
+        if last.get("ema_9_20_cross") == "bearish":
+            score += 1
+        if last.get("bos") == "bearish_bos":
             score += 1
         if last.get("volume_spike"):
             score += 1

@@ -213,10 +213,17 @@ class TechnicalIndicators:
         df["st_resistance"] = 0.0
 
         for i in range(1, len(df)):
-            if df["close"].iloc[i] <= df["st_upper"].iloc[i - 1]:
-                df.loc[df.index[i], "st_trend"] = -1
-            elif df["close"].iloc[i] >= df["st_lower"].iloc[i - 1]:
-                df.loc[df.index[i], "st_trend"] = 1
+            prev_trend = df["st_trend"].iloc[i - 1]
+            if prev_trend == 1:
+                if df["close"].iloc[i] <= df["st_lower"].iloc[i - 1]:
+                    df.loc[df.index[i], "st_trend"] = -1
+                else:
+                    df.loc[df.index[i], "st_trend"] = 1
+            else:
+                if df["close"].iloc[i] >= df["st_upper"].iloc[i - 1]:
+                    df.loc[df.index[i], "st_trend"] = 1
+                else:
+                    df.loc[df.index[i], "st_trend"] = -1
 
             if df["st_trend"].iloc[i] == 1:
                 df.loc[df.index[i], "st_support"] = df["st_lower"].iloc[i]

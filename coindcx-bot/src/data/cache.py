@@ -2,7 +2,10 @@ import json
 import time
 from typing import Any, Dict, Optional
 
-import redis.asyncio as redis
+try:
+    import redis.asyncio as redis
+except ImportError:
+    redis = None
 from loguru import logger
 
 from src.config import settings
@@ -10,13 +13,13 @@ from src.config import settings
 
 class DataCache:
     def __init__(self):
-        self._redis: Optional[redis.Redis] = None
+        self._redis = None
         self._local_cache: Dict[str, Dict] = {}
         self._local_ttl: Dict[str, float] = {}
         self._default_ttl = 300
 
-    async def _get_redis(self) -> Optional[redis.Redis]:
-        if self._redis is None:
+    async def _get_redis(self):
+        if self._redis is None and redis is not None:
             try:
                 self._redis = redis.from_url(
                     settings.redis_url, decode_responses=True

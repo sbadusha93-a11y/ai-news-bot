@@ -25,16 +25,14 @@ class DesktopNotification:
             logger.warning(f"Desktop notification failed: {e}")
 
         try:
-            import subprocess
-            subprocess.run(
-                [
-                    "powershell",
-                    "-Command",
-                    f'New-BaloonTip -Title "{title}" -Message "{message}"',
-                ],
-                capture_output=True,
-                timeout=5,
+            proc = await asyncio.create_subprocess_exec(
+                "powershell",
+                "-Command",
+                f'New-BalloonTip -Title "{title}" -Message "{message}"',
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
+            await asyncio.wait_for(proc.wait(), timeout=5)
             return True
         except Exception:
             return False

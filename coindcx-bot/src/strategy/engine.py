@@ -12,6 +12,7 @@ from src.indicators.smc import SMCIndicators
 from src.indicators.volume import VolumeIndicators
 from src.indicators.price_action import PriceActionIndicators
 from src.indicators.sentiment import SentimentAnalyzer
+from src.ml.predictor import MLPredictor
 from src.strategy.scorer import TradeScorer
 
 
@@ -19,6 +20,7 @@ class StrategyEngine:
     def __init__(
         self,
         exchange: CoinDCXExchange,
+        ml_predictor: Optional[MLPredictor] = None,
     ):
         self.exchange = exchange
         self.technical = TechnicalIndicators()
@@ -27,6 +29,7 @@ class StrategyEngine:
         self.price_action = PriceActionIndicators()
         self.sentiment = SentimentAnalyzer()
         self.scorer = TradeScorer()
+        self.ml_predictor = ml_predictor
         self.timeframes = (
             [bot_config["timeframes"]["primary"]]
             + bot_config["timeframes"]["confirmation"]
@@ -48,6 +51,19 @@ class StrategyEngine:
             df = self.volume.compute_all(df)
             df = self.price_action.compute_all(df)
 
+            ml_score = 0.0
+            ml_confidence = 0.0
+            if self.ml_predictor is not None:
+                try:
+                    pred = self.ml_predictor.predict(df)
+                    ml_confidence = pred.get("confidence", 0)
+                    if pred.get("direction") == "long":
+                        ml_score = ml_confidence * 20
+                    elif pred.get("direction") == "short":
+                        ml_score = -ml_confidence * 20
+                except Exception:
+                    pass
+
             last = df.iloc[-1] if not df.empty else pd.Series()
             analysis["timeframes"][tf] = {
                 "last_row": last.to_dict() if not last.empty else {},
@@ -55,6 +71,8 @@ class StrategyEngine:
                 "smc_score": self.smc.get_smc_score(df),
                 "volume_score": self.volume.get_volume_score(df),
                 "price_action_score": self.price_action.get_price_action_score(df),
+                "ml_score": ml_score,
+                "ml_confidence": ml_confidence,
                 "trend": self._determine_trend(df),
                 "support": last.get("support", 0),
                 "resistance": last.get("resistance", 0),
@@ -145,6 +163,7 @@ class StrategyEngine:
         primary_tf = bot_config["timeframes"]["primary"]
         primary_weight = 0.4
         confirmation_weight = 0.6
+        ml_weight_total = weights.get("ml", 5)
 
         for tf, data in timeframes.items():
             tf_weight = primary_weight if tf == primary_tf else confirmation_weight / max(len(timeframes) - 1, 1)
@@ -154,18 +173,24 @@ class StrategyEngine:
                 "volume": weights["volume"] / 100 * tf_weight,
                 "smc": weights["smc"] / 100 * tf_weight,
                 "price_action": weights["price_action"] / 100 * tf_weight,
+                "ml": ml_weight_total / (100 * len(timeframes)),
             }
 
             ts = data.get("technical_score", 0)
             ss = data.get("smc_score", 0)
             vs = data.get("volume_score", 0)
             ps = data.get("price_action_score", 0)
+            ms = data.get("ml_score", 0)
+            trend_dir = data.get("trend", "sideways")
+            trend_score = 10 if trend_dir == "bullish" else -10 if trend_dir == "bearish" else 0
 
             total_score += (
-                ts * sub_weights["momentum"]
+                trend_score * sub_weights["trend"]
+                + ts * sub_weights["momentum"]
                 + ss * sub_weights["smc"]
                 + vs * sub_weights["volume"]
                 + ps * sub_weights["price_action"]
+                + ms * sub_weights["ml"]
             )
 
             trend = data.get("trend", "neutral")

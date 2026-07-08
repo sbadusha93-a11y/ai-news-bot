@@ -1,5 +1,6 @@
 import asyncio
-from datetime import datetime
+import math
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
@@ -8,6 +9,21 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.config import settings
+
+
+def safe_json(obj):
+    """Recursively convert non-serializable values (inf, nan) to null/0."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return 0
+        return obj
+    if isinstance(obj, dict):
+        return {k: safe_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [safe_json(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(safe_json(v) for v in obj)
+    return obj
 
 app = FastAPI(
     title="CoinDCX Pro Bot API",
@@ -46,7 +62,7 @@ async def root():
         "name": "CoinDCX Pro Bot API",
         "version": "2.0.0",
         "status": "running",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -56,11 +72,14 @@ async def get_status():
     if not bot_instance:
         return {"status": "not_initialized"}
 
+    uptime_secs = bot_instance.watchdog.health_status.get("uptime", 0)
+    uptime_h = int(uptime_secs // 3600)
+    uptime_m = int((uptime_secs % 3600) // 60)
     return {
         "status": "running",
         "mode": settings.bot_mode,
         "positions": bot_instance.trade_executor.get_position_count(),
-        "uptime": "0h 0m",
+        "uptime": f"{uptime_h}h {uptime_m}m",
         "health": bot_instance.watchdog.get_status() if hasattr(bot_instance, "watchdog") else {},
     }
 
@@ -116,7 +135,9 @@ async def close_position(symbol: str):
     if not bot_instance:
         raise HTTPException(400, "Bot not initialized")
 
-    result = await bot_instance.trade_executor.close_trade(symbol, 0, "api_request")
+    ticker = await bot_instance.exchange.fetch_ticker(symbol)
+    exit_price = ticker.get("last", 0) if ticker else 0
+    result = await bot_instance.trade_executor.close_trade(symbol, exit_price, "api_request")
     if not result:
         raise HTTPException(404, f"No position found for {symbol}")
     return {"success": True, "trade": result}

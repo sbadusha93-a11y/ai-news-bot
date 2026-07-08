@@ -168,6 +168,9 @@ class VolumeIndicators:
         lookback = min(50, len(df))
         recent = df.iloc[-lookback:]
 
+        if recent.empty or recent["close"].isna().all():
+            return df
+
         price_bins = pd.cut(
             recent["close"],
             bins=20,
@@ -175,10 +178,12 @@ class VolumeIndicators:
             include_lowest=True,
         )
         vol_by_bin = recent.groupby(price_bins)["volume"].sum()
+        if vol_by_bin.empty:
+            return df
         poc_bin = vol_by_bin.idxmax()
         poc_prices = recent["close"].loc[
-            price_bins == poc_bin
-        ] if len(recent[price_bins == poc_bin]) > 0 else recent["close"]
+            price_bins.values == poc_bin
+        ] if len(recent[price_bins.values == poc_bin]) > 0 else recent["close"]
 
         df.loc[df.index[-1], "volume_profile_poc"] = poc_prices.mean() if len(poc_prices) > 0 else recent["close"].iloc[-1]
 
@@ -187,7 +192,10 @@ class VolumeIndicators:
         vah_price = recent["close"].iloc[-1]
         val_price = recent["close"].iloc[-1]
 
-        for bin_idx in range(vol_by_bin.index.max(), -1, -1):
+        max_bin = vol_by_bin.index.max()
+        if pd.isna(max_bin):
+            return df
+        for bin_idx in range(int(max_bin), -1, -1):
             if bin_idx in vol_by_bin.index:
                 cum_vol += vol_by_bin[bin_idx]
                 if cum_vol >= total_vol * 0.3:
@@ -196,7 +204,10 @@ class VolumeIndicators:
                     break
 
         cum_vol = 0
-        for bin_idx in range(vol_by_bin.index.min(), vol_by_bin.index.max() + 1):
+        min_bin = vol_by_bin.index.min()
+        if pd.isna(min_bin):
+            return df
+        for bin_idx in range(int(min_bin), int(max_bin) + 1):
             if bin_idx in vol_by_bin.index:
                 cum_vol += vol_by_bin[bin_idx]
                 if cum_vol >= total_vol * 0.3:
@@ -231,7 +242,7 @@ class VolumeIndicators:
         elif last.get("mfi_signal") == "overbought":
             score -= 6
 
-        if last.get("volume_spike") and last.get("close", 0) > df["close"].iloc[-2]:
+        if last.get("volume_spike") and last.get("close", 0) > (df["close"].iloc[-2] if len(df) >= 2 else 0):
             score += 10
         elif last.get("volume_spike"):
             score -= 10

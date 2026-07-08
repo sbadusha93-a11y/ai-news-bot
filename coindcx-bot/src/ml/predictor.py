@@ -49,5 +49,5 @@ class MLPredictor:
             "probability": float(avg_prob),
             "confidence": float(confidence),
             "models_used": models_count,
-            "direction": "long" if avg_pred > 0 else "short" if avg_pred < 0 else "neutral",
+            "direction": "long" if avg_pred > 0.5 else "short" if avg_pred < 0.5 else "neutral",
         }

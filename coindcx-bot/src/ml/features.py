@@ -53,7 +53,9 @@ class FeatureEngineer:
         features["target"] = self._create_target(df)
 
         self.feature_columns = [c for c in features.columns if c != "target"]
-        return features.dropna()
+        features = features.dropna()
+        features = features.dropna(subset=["target"])
+        return features
 
     def _create_target(self, df: pd.DataFrame, horizon: int = 12) -> pd.Series:
         future_returns = df["close"].shift(-horizon) / df["close"] - 1

@@ -28,6 +28,25 @@ logs/*
 *.swp
 *.swo
 
+# Database
+data/bot.db
+
+# Test files
+test_*.py
+tests/__pycache__/
+
+# Logs and output
+*.txt
+*.log
+
+# Screenshots and snapshots
+dashboard-*.png
+dashboard-snapshot.md
+dashboard-state.md
+
+# Duplicate config
+/config.json
+
 # OS
 .DS_Store
 Thumbs.db

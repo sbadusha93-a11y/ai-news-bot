@@ -4,6 +4,8 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
+from src.config import bot_config
+
 
 class MarketAnalyzer:
     def __init__(self):
@@ -25,7 +27,7 @@ class MarketAnalyzer:
                 for tf_data in timeframes.values():
                     last = tf_data.get("last_row", {})
                     vol = last.get("volume", 0)
-                    if vol > 0:
+                    if vol > 1:
                         vol_score += min(np.log10(vol) * 10, 50)
 
                 rank_score = confidence * 0.4 + trade_quality * 0.3 + \
@@ -46,10 +48,12 @@ class MarketAnalyzer:
 
     def filter_tradeable(self, ranked: List[Dict]) -> List[Dict]:
         tradeable = []
+        min_conf = bot_config["bot"]["min_confidence"]
+        max_risk = bot_config["bot"].get("max_risk_score", 40)
         for item in ranked:
             if item["direction"] in ("long", "short") and \
-               item["confidence"] >= 90 and \
-               item["risk_score"] <= 50:
+               item["confidence"] >= min_conf and \
+               item["risk_score"] <= max_risk:
                 tradeable.append(item)
         return tradeable
 

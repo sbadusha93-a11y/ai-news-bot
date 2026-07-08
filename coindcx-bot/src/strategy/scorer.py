@@ -24,25 +24,32 @@ class TradeScorer:
             vs = data.get("volume_score", 0)
             ps = data.get("price_action_score", 0)
 
+            w = self.weights
+            total_w = w["trend"] + w["momentum"] + w["volume"] + w["smc"] + w["price_action"]
+            tech_w = (w["trend"] + w["momentum"]) / total_w if total_w > 0 else 0.4
+            smc_w = w["smc"] / total_w if total_w > 0 else 0.3
+            vol_w = w["volume"] / total_w if total_w > 0 else 0.2
+            pa_w = w["price_action"] / total_w if total_w > 0 else 0.1
+
             if ts > 0:
-                buy_score += ts * 0.4
+                buy_score += ts * tech_w
             else:
-                sell_score += abs(ts) * 0.4
+                sell_score += abs(ts) * tech_w
 
             if ss > 0:
-                buy_score += ss * 0.3
+                buy_score += ss * smc_w
             else:
-                sell_score += abs(ss) * 0.3
+                sell_score += abs(ss) * smc_w
 
             if vs > 0:
-                buy_score += vs * 0.2
+                buy_score += vs * vol_w
             else:
-                sell_score += abs(vs) * 0.2
+                sell_score += abs(vs) * vol_w
 
             if ps > 0:
-                buy_score += ps * 0.1
+                buy_score += ps * pa_w
             else:
-                sell_score += abs(ps) * 0.1
+                sell_score += abs(ps) * pa_w
 
             total_indicators += 1
 
@@ -85,7 +92,7 @@ class TradeScorer:
     def _compute_risk_score(
         self, buy_score: float, sell_score: float, analysis: Dict
     ) -> float:
-        rs = 50.0
+        rs = 30.0
         timeframes = analysis.get("timeframes", {})
 
         for tf, data in timeframes.items():

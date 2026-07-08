@@ -31,6 +31,7 @@ class EmailAlert:
             return False
 
         try:
+            import asyncio
             import smtplib
             from email.mime.text import MIMEText
 
@@ -39,11 +40,13 @@ class EmailAlert:
             msg["From"] = self.smtp_user
             msg["To"] = ", ".join(recipients)
 
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.smtp_user, self.smtp_pass)
-                server.send_message(msg)
+            def _send():
+                with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                    server.starttls()
+                    server.login(self.smtp_user, self.smtp_pass)
+                    server.send_message(msg)
 
+            await asyncio.to_thread(_send)
             logger.info(f"Email sent: {subject}")
             return True
         except Exception as e:

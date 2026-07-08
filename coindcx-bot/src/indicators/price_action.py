@@ -25,6 +25,7 @@ class PriceActionIndicators:
         upper_wick = df["high"] - df[["close", "open"]].max(axis=1)
         lower_wick = df[["close", "open"]].min(axis=1) - df["low"]
         total_range = df["high"] - df["low"]
+        safe_range = total_range.replace(0, np.nan)
 
         df["bullish_engulfing"] = False
         df["bearish_engulfing"] = False
@@ -46,6 +47,8 @@ class PriceActionIndicators:
             prev_range = df["high"].iloc[i - 1] - df["low"].iloc[i - 1]
             curr_range = df["high"].iloc[i] - df["low"].iloc[i]
 
+            curr_range_safe = curr_range if curr_range > 0 else np.nan
+
             if curr_close > curr_open and prev_close < prev_open:
                 if curr_open < prev_close and curr_close > prev_open:
                     df.loc[df.index[i], "bullish_engulfing"] = True
@@ -62,9 +65,9 @@ class PriceActionIndicators:
                df["low"].iloc[i] < df["low"].iloc[i - 1]:
                 df.loc[df.index[i], "outside_bar"] = True
 
-            body_ratio = curr_body / curr_range if curr_range > 0 else 0
-            uw_ratio = upper_wick.iloc[i] / curr_range if curr_range > 0 else 0
-            lw_ratio = lower_wick.iloc[i] / curr_range if curr_range > 0 else 0
+            body_ratio = curr_body / curr_range_safe if not np.isnan(curr_range_safe) else 0
+            uw_ratio = upper_wick.iloc[i] / curr_range_safe if not np.isnan(curr_range_safe) else 0
+            lw_ratio = lower_wick.iloc[i] / curr_range_safe if not np.isnan(curr_range_safe) else 0
 
             if body_ratio < 0.3 and lw_ratio > 0.6 and uw_ratio < 0.1:
                 df.loc[df.index[i], "hammer"] = True
@@ -78,14 +81,16 @@ class PriceActionIndicators:
             if i >= 2:
                 b1 = abs(df["close"].iloc[i - 2] - df["open"].iloc[i - 2])
                 b2 = abs(df["close"].iloc[i - 1] - df["open"].iloc[i - 1])
+                prev_range = df["high"].iloc[i - 1] - df["low"].iloc[i - 1]
+                safe_prev_range = prev_range if prev_range > 0 else np.nan
                 if df["close"].iloc[i - 2] < df["open"].iloc[i - 2] and \
-                   b2 / (df["high"].iloc[i - 1] - df["low"].iloc[i - 1]) < 0.1 and \
+                   (b2 / safe_prev_range if not np.isnan(safe_prev_range) else 1) < 0.1 and \
                    df["close"].iloc[i] > df["open"].iloc[i] and \
                    df["close"].iloc[i] > (df["high"].iloc[i - 2] + df["low"].iloc[i - 2]) / 2:
                     df.loc[df.index[i], "morning_star"] = True
 
                 if df["close"].iloc[i - 2] > df["open"].iloc[i - 2] and \
-                   b2 / (df["high"].iloc[i - 1] - df["low"].iloc[i - 1]) < 0.1 and \
+                   (b2 / safe_prev_range if not np.isnan(safe_prev_range) else 1) < 0.1 and \
                    df["close"].iloc[i] < df["open"].iloc[i] and \
                    df["close"].iloc[i] < (df["high"].iloc[i - 2] + df["low"].iloc[i - 2]) / 2:
                     df.loc[df.index[i], "evening_star"] = True
@@ -117,26 +122,34 @@ class PriceActionIndicators:
     def _support_resistance(self, df: pd.DataFrame) -> pd.DataFrame:
         df["support"] = 0.0
         df["resistance"] = 0.0
+        if "swing_high" not in df.columns or "swing_low" not in df.columns:
+            return df
+
+        c = df["close"].values
+        h = df["high"].values
+        lo = df["low"].values
+        sh = df["swing_high"].values
+        sl = df["swing_low"].values
+        idx = df.index
         lookback = 50
 
         for i in range(lookback, len(df)):
-            window = df.iloc[i - lookback:i]
-            current_price = df["close"].iloc[i]
+            start = i - lookback
+            current_price = c[i]
 
-            swing_highs = window[window["swing_high"]] if "swing_high" in window.columns else pd.DataFrame()
-            swing_lows = window[window["swing_low"]] if "swing_low" in window.columns else pd.DataFrame()
+            best_resistance = 0.0
+            best_support = 0.0
 
-            if not swing_highs.empty:
-                nearest_resistance = swing_highs[
-                    swing_highs["high"] > current_price
-                ]["high"].min() if any(swing_highs["high"] > current_price) else 0
-                df.loc[df.index[i], "resistance"] = nearest_resistance
+            for j in range(start, i):
+                if sh[j] and h[j] > current_price:
+                    if best_resistance == 0 or h[j] < best_resistance:
+                        best_resistance = h[j]
+                if sl[j] and lo[j] < current_price:
+                    if lo[j] > best_support:
+                        best_support = lo[j]
 
-            if not swing_lows.empty:
-                nearest_support = swing_lows[
-                    swing_lows["low"] < current_price
-                ]["low"].max() if any(swing_lows["low"] < current_price) else 0
-                df.loc[df.index[i], "support"] = nearest_support
+            df.loc[idx[i], "resistance"] = best_resistance
+            df.loc[idx[i], "support"] = best_support
 
         return df
 
@@ -145,30 +158,30 @@ class PriceActionIndicators:
         df["downtrend_line"] = 0.0
         lookback = 30
 
+        lo = df["low"].values
+        h = df["high"].values
+        idx = df.index
+
         for i in range(lookback, len(df)):
-            window = df.iloc[i - lookback:i]
-            lows = window["low"].values
-            highs = window["high"].values
-            x = np.arange(len(lows))
+            start = i - lookback
+            lows = lo[start:i]
+            highs = h[start:i]
 
-            if len(lows) > 5:
-                low_indices = np.where(
-                    (lows[1:-1] < lows[:-2]) & (lows[1:-1] < lows[2:])
-                )[0] + 1
-                if len(low_indices) >= 2:
-                    recent_lows = lows[low_indices[-2:]]
-                    slope = (recent_lows[1] - recent_lows[0]) / (low_indices[-1] - low_indices[-2])
-                    df.loc[df.index[i], "uptrend_line"] = \
-                        recent_lows[1] + slope * (lookback - low_indices[-1])
+            low_indices = np.where(
+                (lows[1:-1] < lows[:-2]) & (lows[1:-1] < lows[2:])
+            )[0]
+            if len(low_indices) >= 2:
+                a, b = low_indices[-2], low_indices[-1]
+                slope = (lows[b] - lows[a]) / (b - a)
+                df.loc[idx[i], "uptrend_line"] = lows[b] + slope * (lookback - b - 1)
 
-                high_indices = np.where(
-                    (highs[1:-1] > highs[:-2]) & (highs[1:-1] > highs[2:])
-                )[0] + 1
-                if len(high_indices) >= 2:
-                    recent_highs = highs[high_indices[-2:]]
-                    slope = (recent_highs[1] - recent_highs[0]) / (high_indices[-1] - high_indices[-2])
-                    df.loc[df.index[i], "downtrend_line"] = \
-                        recent_highs[1] + slope * (lookback - high_indices[-1])
+            high_indices = np.where(
+                (highs[1:-1] > highs[:-2]) & (highs[1:-1] > highs[2:])
+            )[0]
+            if len(high_indices) >= 2:
+                a, b = high_indices[-2], high_indices[-1]
+                slope = (highs[b] - highs[a]) / (b - a)
+                df.loc[idx[i], "downtrend_line"] = highs[b] + slope * (lookback - b - 1)
 
         return df
 
@@ -177,38 +190,45 @@ class PriceActionIndicators:
         df["double_bottom"] = False
         df["head_shoulders"] = False
         df["inverse_head_shoulders"] = False
+        if "swing_high" not in df.columns or "swing_low" not in df.columns:
+            return df
+
+        h = df["high"].values
+        lo = df["low"].values
+        sh = df["swing_high"].values
+        sl = df["swing_low"].values
+        idx = df.index
         lookback = 40
 
+        swing_high_idx = [i for i in range(len(sh)) if sh[i]]
+        swing_low_idx = [i for i in range(len(sl)) if sl[i]]
+
         for i in range(lookback, len(df)):
-            window = df.iloc[i - lookback:i]
-            high_points = window[window["swing_high"]] if "swing_high" in window.columns else pd.DataFrame()
-            low_points = window[window["swing_low"]] if "swing_low" in window.columns else pd.DataFrame()
+            start = i - lookback
 
-            if len(high_points) >= 2:
-                last_two = high_points.iloc[-2:]
-                high_diff = abs(last_two["high"].iloc[0] - last_two["high"].iloc[1])
-                high_avg = last_two["high"].mean()
-                if high_avg > 0 and high_diff / high_avg < 0.02:
-                    df.loc[df.index[i], "double_top"] = True
+            hi_in_window = [j for j in swing_high_idx if start <= j < i]
+            if len(hi_in_window) >= 2:
+                a, b = hi_in_window[-2], hi_in_window[-1]
+                high_avg = (h[a] + h[b]) / 2
+                if high_avg > 0 and abs(h[a] - h[b]) / high_avg < 0.02:
+                    df.loc[idx[i], "double_top"] = True
 
-            if len(low_points) >= 2:
-                last_two = low_points.iloc[-2:]
-                low_diff = abs(last_two["low"].iloc[0] - last_two["low"].iloc[1])
-                low_avg = last_two["low"].mean()
-                if low_avg > 0 and low_diff / low_avg < 0.02:
-                    df.loc[df.index[i], "double_bottom"] = True
+            lo_in_window = [j for j in swing_low_idx if start <= j < i]
+            if len(lo_in_window) >= 2:
+                a, b = lo_in_window[-2], lo_in_window[-1]
+                low_avg = (lo[a] + lo[b]) / 2
+                if low_avg > 0 and abs(lo[a] - lo[b]) / low_avg < 0.02:
+                    df.loc[idx[i], "double_bottom"] = True
 
-            if len(high_points) >= 3:
-                last_three = high_points.iloc[-3:]
-                h1, h2, h3 = last_three["high"].iloc[0], last_three["high"].iloc[1], last_three["high"].iloc[2]
-                if h2 > h1 and h2 > h3:
-                    df.loc[df.index[i], "head_shoulders"] = True
+            if len(hi_in_window) >= 3:
+                a, b, c = hi_in_window[-3], hi_in_window[-2], hi_in_window[-1]
+                if h[b] > h[a] and h[b] > h[c]:
+                    df.loc[idx[i], "head_shoulders"] = True
 
-            if len(low_points) >= 3:
-                last_three = low_points.iloc[-3:]
-                l1, l2, l3 = last_three["low"].iloc[0], last_three["low"].iloc[1], last_three["low"].iloc[2]
-                if l2 < l1 and l2 < l3:
-                    df.loc[df.index[i], "inverse_head_shoulders"] = True
+            if len(lo_in_window) >= 3:
+                a, b, c = lo_in_window[-3], lo_in_window[-2], lo_in_window[-1]
+                if lo[b] < lo[a] and lo[b] < lo[c]:
+                    df.loc[idx[i], "inverse_head_shoulders"] = True
 
         return df
 

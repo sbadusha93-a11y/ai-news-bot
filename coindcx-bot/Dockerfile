@@ -4,10 +4,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    g++ \
     build-essential \
-    libta-lib0 \
-    libta-lib-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -18,4 +15,6 @@ COPY . .
 
 RUN mkdir -p data/historical data/models logs
 
-CMD ["python", "src/main.py"]
+EXPOSE 8080
+
+CMD ["python", "-m", "src.main", "--api"]

@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+import httpx
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -60,31 +61,35 @@ class DataFetcher:
             timeframes = [bot_config["timeframes"]["primary"]] + bot_config["timeframes"]["confirmation"]
 
         results = {}
-        tasks = {}
-        for tf in timeframes:
-            limit = 300 if tf in ("15m", "1h") else 200
-            tasks[tf] = self.fetch_historical_data(symbol, tf, limit=limit)
-
-        tf_list = list(tasks.keys())
-        data_list = await asyncio.gather(*[tasks[tf] for tf in tf_list])
-        for tf, data in zip(tf_list, data_list):
+        async def _fetch_one(tf):
+            try:
+                return await asyncio.wait_for(
+                    self.fetch_historical_data(symbol, tf, limit=300 if tf in ("15m", "1h") else 200),
+                    timeout=20,
+                )
+            except asyncio.TimeoutError:
+                return pd.DataFrame()
+            except Exception:
+                return pd.DataFrame()
+        data_list = await asyncio.gather(*[_fetch_one(tf) for tf in timeframes])
+        for tf, data in zip(timeframes, data_list):
             if not data.empty:
                 results[tf] = data
-
         return results
 
-    async def scan_all_markets(self) -> pd.DataFrame:
-        tickers = await self.exchange.fetch_all_tickers()
+    async def scan_all_markets(self, quote_currency: str = "USDT") -> pd.DataFrame:
+        tickers = await self.exchange.fetch_all_tickers(quote_currency)
         if not tickers:
             return pd.DataFrame()
 
         rows = []
         for symbol, ticker in tickers.items():
-            pair = symbol.replace("/", "_")
+            if not symbol.endswith(quote_currency):
+                continue
             rows.append({
-                "symbol": pair,
+                "symbol": symbol,
                 "price": ticker.get("last", 0),
-                "volume": ticker.get("quoteVolume", 0) or ticker.get("baseVolume", 0) * ticker.get("last", 0),
+                "volume": ticker.get("quoteVolume") or (ticker.get("baseVolume", 0) * ticker.get("last", 0)),
                 "change": ticker.get("percentage", 0),
                 "high": ticker.get("high", 0),
                 "low": ticker.get("low", 0),
@@ -100,42 +105,40 @@ class DataFetcher:
         return df.head(top_n)
 
     async def fetch_sentiment_data(self) -> Dict:
-        return {
-            "fear_greed": await self._fetch_fear_greed(),
-            "btc_dominance": await self._fetch_btc_dominance(),
-            "funding_rates": {},
-            "open_interest": {},
-        }
+        return {"fear_greed": None, "btc_dominance": None, "funding_rates": {}, "open_interest": {}}
+
+    async def _get_http(self) -> httpx.AsyncClient:
+        if not hasattr(self, '_http_client') or self._http_client is None:
+            self._http_client = httpx.AsyncClient(timeout=10)
+        return self._http_client
 
     async def _fetch_fear_greed(self) -> Optional[int]:
         try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    "https://api.alternative.me/fng/?limit=1",
-                    timeout=10,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return int(data["data"][0]["value"])
+            client = await self._get_http()
+            resp = await asyncio.wait_for(
+                client.get("https://api.alternative.me/fng/?limit=1"), timeout=10
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return int(data["data"][0]["value"])
         except Exception:
             pass
         return None
 
     async def _fetch_btc_dominance(self) -> Optional[float]:
         try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    "https://api.coingecko.com/api/v3/global",
-                    timeout=10,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return data["data"]["market_cap_percentage"].get("btc")
+            client = await self._get_http()
+            resp = await asyncio.wait_for(
+                client.get("https://api.coingecko.com/api/v3/global"), timeout=10
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data["data"]["market_cap_percentage"].get("btc")
         except Exception:
             pass
         return None
 
     async def close(self):
+        if hasattr(self, '_http_client') and self._http_client is not None:
+            await self._http_client.aclose()
         await self.exchange.close()
