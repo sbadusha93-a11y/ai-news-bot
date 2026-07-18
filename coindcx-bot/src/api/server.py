@@ -176,6 +176,15 @@ async def control_bot(control: BotControl):
         raise HTTPException(400, f"Unknown action: {action}")
 
 
+@app.post("/api/v1/clear_history")
+async def clear_history():
+    global bot_instance
+    if bot_instance and hasattr(bot_instance, "database"):
+        await bot_instance.database.clear_all_trades()
+        return {"success": True, "message": "All trades cleared"}
+    return {"success": False, "message": "Bot not initialized"}
+
+
 @app.get("/api/v1/performance")
 async def get_performance():
     global bot_instance

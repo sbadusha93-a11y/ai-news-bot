@@ -187,6 +187,17 @@ class Database:
             pm = PerformanceMetric(**metrics)
             session.add(pm)
 
+    async def clear_all_trades(self):
+        session = await self.get_session()
+        if session is None:
+            return
+        async with session.begin():
+            from sqlalchemy import delete
+            await session.execute(delete(TradeLog))
+            await session.execute(delete(Trade))
+            await session.execute(delete(PerformanceMetric))
+            logger.info("All trades, logs, and metrics cleared")
+
     async def close_stale_trades(self):
         try:
             session = await self.get_session()
