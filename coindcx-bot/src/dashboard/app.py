@@ -591,13 +591,6 @@ def _render_scanner():
         or (st.session_state.auto_refresh_on and (now_ts - st.session_state.last_full_scan) > scan_interval)
     )
 
-    if not st.session_state.scanner_signals and st.session_state.auto_refresh_on:
-        if st.session_state.last_full_scan == 0:
-            st.info("⏳ Running initial market scan... (this may take 60-120s)")
-        else:
-            elapsed = now_ts - st.session_state.last_full_scan
-            st.info(f"⏳ Scanning again in {max(1, scan_interval - elapsed)}s...")
-
     if should_scan and not bot_signals and not st.session_state.get("scan_in_progress", False):
         st.session_state.scan_in_progress = True
         new_signals = _cached_scan(max_coins)
@@ -605,9 +598,6 @@ def _render_scanner():
         if new_signals:
             st.session_state.scanner_signals = new_signals
         st.session_state.last_full_scan = now_ts
-
-    if st.session_state.get("scan_in_progress", False):
-        st.info("Scanning in progress... results will appear in ~30-60s")
 
     stale_count = sum(1 for s in st.session_state.scanner_signals if now_ts >= s["expiry_ts"])
     from_bot = any(s.get("from_bot") for s in st.session_state.scanner_signals)
@@ -643,9 +633,7 @@ def _render_scanner():
         )
 
         if stale_count > 0:
-            st.caption(f"⚠️ {stale_count} signal(s) are stale. Click **Scan Now** to refresh.")
-    elif not run_scan:
-        st.info("No active signals. Waiting for bot scan or click **🚀 Scan Now** for manual scan.")
+            st.caption(f"⚠️ {stale_count} stale signals — click Scan Now to refresh.")
 
     _render_expired_signals()
 
