@@ -206,6 +206,25 @@ async def scan_market():
     return {"opportunities": opportunities}
 
 
+@app.post("/api/v1/trigger_scan")
+async def trigger_scan():
+    global bot_instance
+    if not bot_instance:
+        return {"status": "error", "message": "Bot not initialized"}
+    if getattr(bot_instance, "_scan_in_progress", False):
+        return {"status": "running", "message": "Scan already in progress"}
+    bot_instance._scan_in_progress = True
+
+    async def _run():
+        try:
+            await bot_instance.scan_market()
+        finally:
+            bot_instance._scan_in_progress = False
+
+    asyncio.create_task(_run())
+    return {"status": "started", "message": "Scan started in background"}
+
+
 @app.get("/api/v1/tickers")
 async def get_tickers():
     global bot_instance

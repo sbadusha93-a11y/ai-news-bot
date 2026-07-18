@@ -80,6 +80,7 @@ class CoinDCXBot:
         self.strategy_optimizer = StrategyOptimizer()
         self.watchdog = Watchdog()
         self.last_ranked: List[Dict] = []
+        self._scan_in_progress = False
 
     async def initialize(self):
         logger.info("Initializing CoinDCX Pro Bot...")

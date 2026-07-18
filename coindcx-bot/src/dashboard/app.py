@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from loguru import logger
+from streamlit_autorefresh import st_autorefresh
 
 import numpy as np
 
@@ -364,7 +365,7 @@ def _init_scanner_state():
     if "last_full_scan" not in st.session_state:
         st.session_state.last_full_scan = 0
     if "auto_refresh_on" not in st.session_state:
-        st.session_state.auto_refresh_on = False
+        st.session_state.auto_refresh_on = True
     if "using_bot_signals" not in st.session_state:
         st.session_state.using_bot_signals = False
 
@@ -565,7 +566,7 @@ def _render_scanner():
 
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        scan_type = st.radio("Scan Type", ["Quick Scan (Top 30)", "Full Scan (All USDT pairs)"], horizontal=True, label_visibility="collapsed")
+        st.markdown("Auto-refresh every 30s")
     with col2:
         auto_refresh = st.checkbox("Auto-refresh", value=st.session_state.auto_refresh_on)
         if auto_refresh != st.session_state.auto_refresh_on:
@@ -573,73 +574,221 @@ def _render_scanner():
             st.rerun()
     with col3:
         st.markdown("<br>", unsafe_allow_html=True)
-        run_scan = st.button("🚀 Scan Now", type="primary", use_container_width=True)
 
-    max_coins = 30 if "Quick" in scan_type else 100
     now_ts = int(datetime.now(timezone.utc).timestamp())
-
     bot_signals = load_bot_signals()
-    if bot_signals:
-        st.session_state.scanner_signals = bot_signals
-        st.session_state.last_full_scan = now_ts
-        st.session_state.using_bot_signals = True
 
-    scan_interval = 120 if bot_signals else 60
-    should_scan = (
-        run_scan
-        or (st.session_state.auto_refresh_on and st.session_state.last_full_scan == 0)
-        or (st.session_state.auto_refresh_on and (now_ts - st.session_state.last_full_scan) > scan_interval)
-    )
+    st.markdown('<div id="signal-table-container"></div>', unsafe_allow_html=True)
 
-    if should_scan and not bot_signals and not st.session_state.get("scan_in_progress", False):
-        st.session_state.scan_in_progress = True
-        new_signals = _cached_scan(max_coins)
-        st.session_state.scan_in_progress = False
-        if new_signals:
-            st.session_state.scanner_signals = new_signals
-        st.session_state.last_full_scan = now_ts
-
-    stale_count = sum(1 for s in st.session_state.scanner_signals if now_ts >= s["expiry_ts"])
-    from_bot = any(s.get("from_bot") for s in st.session_state.scanner_signals)
-
-    if st.session_state.scanner_signals:
-        long_count = sum(1 for s in st.session_state.scanner_signals if s["signal"] == "LONG")
-        short_count = sum(1 for s in st.session_state.scanner_signals if s["signal"] == "SHORT")
-        neutral_count = sum(1 for s in st.session_state.scanner_signals if s["signal"] == "NEUTRAL")
-
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("Signals", len(st.session_state.scanner_signals))
-        col2.metric("🟢 LONG", long_count)
-        col3.metric("🔴 SHORT", short_count)
-        col4.metric("⚪ Neutral", neutral_count)
-        col5.metric("⚠️ Stale", stale_count)
-
-        if from_bot:
-            st.caption("🤖 Signals from bot's strategy engine")
-
-        live_tickers = {}
-        try:
-            ticker_data = _run_async(_fetch_all_tickers())
-            if ticker_data:
-                live_tickers = ticker_data
-        except Exception:
-            pass
-        _render_signal_table(st.session_state.scanner_signals, tickers=live_tickers, now_ts=now_ts)
-
-        st.download_button(
-            "📥 Download CSV",
-            pd.DataFrame(st.session_state.scanner_signals).to_csv(index=False),
-            "market_scan.csv", "text/csv",
-        )
-
-        if stale_count > 0:
-            st.caption(f"⚠️ {stale_count} stale signals — click Scan Now to refresh.")
-
-    _render_expired_signals()
+    _render_scanner_js(bot_signals)
 
     if st.session_state.expired_signals and st.button("🗑️ Clear Expired History", type="secondary"):
         st.session_state.expired_signals = []
         st.rerun()
+
+
+def _render_scanner_js(initial_signals):
+    import json
+    initial_json = json.dumps([safe_json(s) for s in initial_signals]) if initial_signals else "[]"
+    html = f"""
+    <div id="scanner-status" style="margin-bottom:8px;color:#888;font-size:13px;"></div>
+    <div id="scanner-metrics" style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;"></div>
+    <div id="scanner-table"></div>
+    <script>
+    (function() {{
+        var signals = {initial_json};
+        var lastScan = 0;
+        var scanInterval = 180;
+        var autoRefresh = {str(st.session_state.auto_refresh_on).lower()};
+        var waiting = signals.length === 0;
+
+        function fmtPrice(p) {{ return p ? '$' + Number(p).toFixed(4) : '—'; }}
+        function fmtPnl(entry, curr) {{
+            if (!entry) return '—';
+            var pnl = ((curr - entry) / entry * 100);
+            var c = pnl >= 0 ? '#00ff88' : '#ff4444';
+            return '<span style="color:' + c + '">' + (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%</span>';
+        }}
+
+        function renderTable(sigs) {{
+            var container = document.getElementById('scanner-table');
+            var metrics = document.getElementById('scanner-metrics');
+            var status = document.getElementById('scanner-status');
+            if (!container) return;
+            if (!sigs || sigs.length === 0) {{
+                container.innerHTML = '<div style="padding:20px;text-align:center;color:#666;">No signals yet. Scan in progress...</div>';
+                metrics.innerHTML = '';
+                return;
+            }}
+            var now = Date.now();
+            var long = 0, short = 0, neut = 0, stale = 0;
+            var html = '<table style="width:100%;border-collapse:collapse;font-size:13px;color:#fff;">';
+            html += '<thead><tr style="background:#1a1a2e;">';
+            html += '<th>Coin</th><th>Signal</th><th>Conf</th><th>Entry</th><th>Current</th><th>Chg%</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th>';
+            html += '<th>Trend</th><th>RSI</th><th>MACD</th><th>ADX</th><th>BOS</th><th>CHOCH</th><th>Expiry</th>';
+            html += '</tr></thead><tbody>';
+            sigs.forEach(function(s) {{
+                if (s.signal === 'LONG') long++; else if (s.signal === 'SHORT') short++; else neut++;
+                var expiry = (s.expiry_ts || 0) * 1000;
+                var isStale = now >= expiry;
+                if (isStale) stale++;
+                var sigColor = s.signal === 'LONG' ? '#00ff88' : s.signal === 'SHORT' ? '#ff4444' : '#888';
+                var entry = s.entry_price || 0;
+                var current = s.current_price || entry;
+                var pnlColor = ((current - entry) / entry * 100) >= 0 ? '#00ff88' : '#ff4444';
+                html += '<tr' + (isStale ? ' style="opacity:0.6;"' : '') + ' data-sym="' + s.symbol + '" data-entry="' + entry + '">';
+                html += '<td style="padding:6px 8px;font-weight:bold;">' + s.symbol.replace('_','/') + '</td>';
+                html += '<td style="padding:6px 8px;color:' + sigColor + '">' + s.signal + '</td>';
+                html += '<td style="padding:6px 8px;">' + (s.confidence || 0).toFixed(0) + '%</td>';
+                html += '<td style="padding:6px 8px;">' + fmtPrice(entry) + '</td>';
+                html += '<td class="pcell" style="padding:6px 8px;color:' + pnlColor + '">' + fmtPrice(current) + '</td>';
+                html += '<td class="pnlcell" style="padding:6px 8px;color:' + pnlColor + '">' + ((current - entry) / entry * 100).toFixed(2) + '%</td>';
+                html += '<td style="padding:6px 8px;color:#ff6666;">' + fmtPrice(s.sl_price) + '</td>';
+                html += '<td style="padding:6px 8px;color:#66ff66;">' + fmtPrice(s.tp1_price) + '</td>';
+                html += '<td style="padding:6px 8px;color:#66ff66;">' + fmtPrice(s.tp2_price) + '</td>';
+                html += '<td style="padding:6px 8px;color:#66ff66;">' + fmtPrice(s.tp3_price) + '</td>';
+                html += '<td style="padding:6px 8px;">' + (s.trend || '—') + '</td>';
+                html += '<td style="padding:6px 8px;">' + (s.rsi || 0).toFixed(1) + '</td>';
+                html += '<td style="padding:6px 8px;">' + (s.macd_dir || '—') + '</td>';
+                html += '<td style="padding:6px 8px;">' + (s.adx || 0).toFixed(1) + '</td>';
+                html += '<td style="padding:6px 8px;">' + (s.bos || '—') + '</td>';
+                html += '<td style="padding:6px 8px;">' + (s.choch || '—') + '</td>';
+                html += '<td class="expiry-cell" style="padding:6px 8px;font-family:monospace;color:#ffcc00;" data-expiry="' + (s.expiry_ts || 0) + '"></td>';
+                html += '</tr>';
+            }});
+            html += '</tbody></table>';
+            container.innerHTML = html;
+
+            metrics.innerHTML =
+                '<span style="padding:4px 12px;background:#1a1a2e;border-radius:4px;">Signals: ' + sigs.length + '</span>' +
+                '<span style="padding:4px 12px;background:#1a1a2e;border-radius:4px;color:#00ff88;">LONG: ' + long + '</span>' +
+                '<span style="padding:4px 12px;background:#1a1a2e;border-radius:4px;color:#ff4444;">SHORT: ' + short + '</span>' +
+                '<span style="padding:4px 12px;background:#1a1a2e;border-radius:4px;color:#888;">Neutral: ' + neut + '</span>' +
+                (stale > 0 ? '<span style="padding:4px 12px;background:#1a1a2e;border-radius:4px;color:#ff8800;">Stale: ' + stale + '</span>' : '');
+        }}
+
+        function updateCountdowns() {{
+            document.querySelectorAll('.expiry-cell').forEach(function(el) {{
+                var expiry = parseInt(el.getAttribute('data-expiry')) * 1000;
+                var diff = expiry - Date.now();
+                if (diff <= 0) {{
+                    el.innerHTML = 'STALE';
+                    el.style.color = '#ff8800';
+                }} else {{
+                    var h = Math.floor(diff / 3600000);
+                    var m = Math.floor((diff % 3600000) / 60000);
+                    var s = Math.floor((diff % 60000) / 1000);
+                    el.innerHTML = h + 'h ' + String(m).padStart(2,'0') + 'm ' + String(s).padStart(2,'0') + 's';
+                }}
+            }});
+        }}
+
+        function updatePrices() {{
+            var rows = document.querySelectorAll('tr[data-sym]');
+            if (rows.length === 0) return;
+            var syms = [];
+            rows.forEach(function(r) {{ syms.push(r.getAttribute('data-sym')); }});
+            fetch('/api/v1/live_prices?symbols=' + syms.join(','))
+                .then(function(r) {{ return r.json(); }})
+                .then(function(data) {{
+                    var prices = data.prices || {{}};
+                    rows.forEach(function(tr) {{
+                        var sym = tr.getAttribute('data-sym');
+                        var ticker = prices[sym] || {{}};
+                        var last = ticker.last || 0;
+                        if (!last) return;
+                        var entry = parseFloat(tr.getAttribute('data-entry')) || 0;
+                        var pc = tr.querySelector('.pcell');
+                        var pnl = tr.querySelector('.pnlcell');
+                        if (!pc || !pnl) return;
+                        var pct = ((last - entry) / entry * 100);
+                        var c = pct >= 0 ? '#00ff88' : '#ff4444';
+                        pc.textContent = '$' + last.toFixed(4);
+                        pc.style.color = c;
+                        pnl.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+                        pnl.style.color = c;
+                    }});
+                }}).catch(function(){{}});
+        }}
+
+        function pollSignals() {{
+            fetch('/api/v1/market_scan')
+                .then(function(r) {{ return r.json(); }})
+                .then(function(data) {{
+                    var opps = data.opportunities || [];
+                    if (opps.length > 0 && JSON.stringify(opps) !== JSON.stringify(signals)) {{
+                        signals = opps;
+                        var expiry = Math.floor(Date.now() / 1000) + 3600;
+                        var now = Math.floor(Date.now() / 1000);
+                        var formatted = opps.map(function(o) {{
+                            var tf = o.analysis && o.analysis.timeframes || {{}};
+                            var keys = Object.keys(tf);
+                            var ptf = keys.length > 0 ? keys[0] : '4h';
+                            var lr = (tf[ptf] && tf[ptf].last_row) || {{}};
+                            var close = lr.close || 0;
+                            var atr = lr.atr || 0;
+                            var dir = o.direction || 'neutral';
+                            var sl = null;
+                            if (dir === 'long') sl = close - (atr * 1.5);
+                            else if (dir === 'short') sl = close + (atr * 1.5);
+                            return {{
+                                symbol: o.symbol || '',
+                                signal: dir === 'long' ? 'LONG' : dir === 'short' ? 'SHORT' : 'NEUTRAL',
+                                confidence: o.confidence || 50,
+                                entry_price: close,
+                                current_price: close,
+                                sl_price: sl,
+                                tp1_price: null, tp2_price: null, tp3_price: null,
+                                trend: lr.st_direction || 'neutral',
+                                rsi: lr.rsi || 50,
+                                macd_dir: lr.macd_signal_line || 'neutral',
+                                adx: lr.adx || 0,
+                                bos: lr.bos || 'none',
+                                choch: lr.choch || 'none',
+                                expiry_ts: expiry,
+                                scanned_at: now,
+                                from_bot: true
+                            }};
+                        }});
+                        renderTable(formatted);
+                        var status = document.getElementById('scanner-status');
+                        if (status) status.textContent = 'Last update: ' + new Date().toLocaleTimeString();
+                    }}
+                }}).catch(function(){{}});
+        }}
+
+        function tryStartScan() {{
+            var status = document.getElementById('scanner-status');
+            if (signals.length === 0 && autoRefresh && !waiting) {{
+                waiting = true;
+                if (status) status.textContent = 'Starting background scan...';
+                fetch('/api/v1/trigger_scan', {{method:'POST'}})
+                    .then(function(r) {{ return r.json(); }})
+                    .then(function(d) {{
+                        if (status) status.textContent = d.message;
+                        pollSignals();
+                        var retries = 0;
+                        var waitInterval = setInterval(function() {{
+                            pollSignals();
+                            retries++;
+                            if (signals.length > 0 || retries > 60) {{
+                                clearInterval(waitInterval);
+                                waiting = false;
+                            }}
+                        }}, 5000);
+                    }}).catch(function(){{ waiting = false; }});
+            }}
+        }}
+
+        renderTable(signals);
+        if (signals.length === 0) tryStartScan();
+        setInterval(updateCountdowns, 1000);
+        setInterval(updatePrices, 2000);
+        if (autoRefresh) setInterval(pollSignals, 30000);
+    }})();
+    </script>
+    """
+    st.components.v1.html(html, height=600, scrolling=True)
 
 
 def _render_backtest():
