@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV PORT=8501
+ENV PORT=8080
 EXPOSE $PORT
 
-CMD streamlit run src/dashboard/app.py --server.port=$PORT --server.address=0.0.0.0
+CMD python combined_server.py
