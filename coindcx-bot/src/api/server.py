@@ -197,6 +197,41 @@ async def scan_market():
     return {"opportunities": opportunities}
 
 
+@app.get("/api/v1/tickers")
+async def get_tickers():
+    global bot_instance
+    if not bot_instance:
+        return {"tickers": {}}
+    try:
+        tickers = await bot_instance.exchange.fetch_all_tickers()
+        keys = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+        result = {}
+        for k in keys:
+            found = next((s for s in tickers if k in s), None)
+            if found:
+                result[k] = tickers[found]
+        return {"tickers": result}
+    except Exception:
+        return {"tickers": {}}
+
+
+@app.get("/api/v1/live_prices")
+async def live_prices(symbols: str = Query("BTCUSDT,ETHUSDT")):
+    global bot_instance
+    if not bot_instance:
+        return {"prices": {}}
+    try:
+        sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+        result = {}
+        for sym in sym_list:
+            ticker = await bot_instance.exchange.fetch_ticker(sym)
+            if ticker:
+                result[sym] = ticker
+        return {"prices": result}
+    except Exception:
+        return {"prices": {}}
+
+
 def set_bot_instance(bot):
     global bot_instance
     bot_instance = bot

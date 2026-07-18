@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -7,7 +8,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 from loguru import logger
-from streamlit_autorefresh import st_autorefresh
 
 import numpy as np
 
@@ -79,6 +79,70 @@ def run_dashboard():
     )
 
 
+def _live_prices_js(symbols=None, pair_labels=None):
+    if symbols is None:
+        symbols = ["BTCUSDT", "ETHUSDT"]
+    if pair_labels is None:
+        pair_labels = {s: s.replace("USDT", "/USDT") for s in symbols}
+    api_base = ""
+    script = f"""
+    <div id="live-prices-top" style="display:flex;gap:20px;margin-bottom:16px;flex-wrap:wrap;">
+        {''.join(f'<div id="price-{s}" class="price-card"><div class="price-label">{pair_labels.get(s, s)}</div><div class="price-value">--</div><div class="price-change">--</div></div>' for s in symbols)}
+    </div>
+    <style>
+        .price-card {{ background:#1a1a2e; border-radius:8px; padding:12px 20px; min-width:160px; flex:1; }}
+        .price-label {{ font-size:12px; color:#888; text-transform:uppercase; }}
+        .price-value {{ font-size:24px; font-weight:bold; color:#fff; font-family:monospace; }}
+        .price-change {{ font-size:13px; font-family:monospace; }}
+        .price-up {{ color:#00ff88 !important; }}
+        .price-down {{ color:#ff4444 !important; }}
+    </style>
+    <script>
+    (function() {{
+        var symbols = {json.dumps(symbols)};
+        function updatePrices() {{
+            var url = '{api_base}/api/v1/live_prices?symbols=' + symbols.join(',');
+            fetch(url)
+                .then(function(r) {{ return r.json(); }})
+                .then(function(data) {{
+                    var prices = data.prices || {{}};
+                    symbols.forEach(function(s) {{
+                        var ticker = prices[s] || {{}};
+                        var last = ticker.last || 0;
+                        var chg = ticker.percentage || 0;
+                        var el = document.getElementById('price-' + s);
+                        if (!el) return;
+                        var valDiv = el.querySelector('.price-value');
+                        var chgDiv = el.querySelector('.price-change');
+                        if (valDiv) {{
+                            valDiv.textContent = last ? '$' + last.toFixed(2) : '--';
+                            valDiv.className = 'price-value' + (chg > 0 ? ' price-up' : chg < 0 ? ' price-down' : '');
+                        }}
+                        if (chgDiv) {{
+                            chgDiv.textContent = chg ? (chg > 0 ? '+' : '') + chg.toFixed(2) + '%' : '--';
+                            chgDiv.className = 'price-change' + (chg > 0 ? ' price-up' : chg < 0 ? ' price-down' : '');
+                        }}
+                    }});
+                }}).catch(function(){{}});
+        }}
+        updatePrices();
+        setInterval(updatePrices, 1500);
+    }})();
+    </script>
+    """
+    return script
+
+
+def _render_live_prices(btc=None, eth=None, total_markets=0, usdt_pairs=0):
+    st.components.v1.html(_live_prices_js(), height=80)
+    with st.container():
+        cols = st.columns(4)
+        with cols[2]:
+            st.metric("Markets", str(total_markets))
+        with cols[3]:
+            st.metric("USDT Pairs", str(usdt_pairs))
+
+
 def _render_login():
     if not st.session_state.authenticated:
         st.markdown(
@@ -102,37 +166,10 @@ def _render_login():
 def _render_dashboard():
     st.title("📊 Trading Dashboard")
 
-    count = st_autorefresh(interval=3000, key="dash_autorefresh")
-
     tickers = _run_async(_fetch_all_tickers())
-    btc_key = "BTCUSDT" if "BTCUSDT" in tickers else next((k for k in tickers if "BTC" in k and "USDT" in k and "WBTC" not in k), "")
-    eth_key = "ETHUSDT" if "ETHUSDT" in tickers else next((k for k in tickers if "ETH" in k and "USDT" in k and "WETH" not in k), "")
-    btc = tickers.get(btc_key, {})
-    eth = tickers.get(eth_key, {})
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        btc_price = btc.get("last", 0)
-        btc_chg = btc.get("percentage", 0)
-        st.metric(
-            "BTC/USDT",
-            f"${btc_price:,.2f}",
-            f"{btc_chg:+.2f}%" if btc_price else "N/A",
-        )
-    with col2:
-        eth_price = eth.get("last", 0)
-        eth_chg = eth.get("percentage", 0)
-        st.metric(
-            "ETH/USDT",
-            f"${eth_price:,.2f}",
-            f"{eth_chg:+.2f}%" if eth_price else "N/A",
-        )
-    with col3:
-        total_markets = len(tickers)
-        st.metric("Markets", f"{total_markets}")
-    with col4:
-        usdt_pairs = sum(1 for s in tickers if s.endswith("USDT"))
-        st.metric("USDT Pairs", f"{usdt_pairs}")
+    _render_live_prices(tickers.get("BTCUSDT", {}), tickers.get("ETHUSDT", {}),
+                        len(tickers), sum(1 for s in tickers if s.endswith("USDT")))
 
     st.subheader("📈 Top 10 Markets by Volume")
     df_tickers = pd.DataFrame([
@@ -344,17 +381,19 @@ def _format_signal_row(s, live_price=None, is_stale=False):
     pnl_pct = ((current - s["entry_price"]) / s["entry_price"] * 100) if s["entry_price"] else 0
     pnl_color = "#00ff88" if pnl_pct >= 0 else "#ff4444"
     stale_attr = ' data-stale="1"' if is_stale else ""
+    sym_raw = s["symbol"]
+    entry_price = s["entry_price"]
 
     def price_str(p):
         return f"${p:,.4f}" if p else "—"
 
-    return f"""<tr{stale_attr}>
+    return f"""<tr{stale_attr} data-symbol="{sym_raw}" data-entry="{entry_price}">
         <td><b>{coin}</b></td>
         <td style="color:{'#00ff88' if sig=='LONG' else '#ff4444' if sig=='SHORT' else '#888'}">{sig_icon} {sig}</td>
         <td>{s['confidence']:.0f}%</td>
-        <td>{price_str(s['entry_price'])}</td>
-        <td><span style="color:{pnl_color}">{price_str(current)}</span></td>
-        <td style="color:{pnl_color}">{pnl_pct:+.2f}%</td>
+        <td class="entry-cell">{price_str(s['entry_price'])}</td>
+        <td><span class="price-cell" style="color:{pnl_color}">{price_str(current)}</span></td>
+        <td><span class="pnl-cell" style="color:{pnl_color}">{pnl_pct:+.2f}%</span></td>
         <td style="color:#ff6666">{price_str(s['sl_price'])}</td>
         <td style="color:#66ff66">{price_str(s['tp1_price'])}</td>
         <td style="color:#66ff66">{price_str(s['tp2_price'])}</td>
@@ -407,7 +446,38 @@ def _render_signal_table(signals, tickers=None, now_ts=None):
     </table>
     <script>
     (function() {{
-        function updateAll() {{
+        var priceSymbols = [];
+        document.querySelectorAll('tr[data-symbol]').forEach(function(tr) {{
+            priceSymbols.push(tr.getAttribute('data-symbol'));
+        }});
+
+        function updatePrices() {{
+            if (priceSymbols.length === 0) return;
+            var url = '/api/v1/live_prices?symbols=' + priceSymbols.join(',');
+            fetch(url)
+                .then(function(r) {{ return r.json(); }})
+                .then(function(data) {{
+                    var prices = data.prices || {{}};
+                    priceSymbols.forEach(function(sym) {{
+                        var ticker = prices[sym] || {{}};
+                        var last = ticker.last || 0;
+                        var tr = document.querySelector('tr[data-symbol="' + sym + '"]');
+                        if (!tr || !last) return;
+                        var entry = parseFloat(tr.getAttribute('data-entry')) || 0;
+                        var priceCell = tr.querySelector('.price-cell');
+                        var pnlCell = tr.querySelector('.pnl-cell');
+                        if (!priceCell || !pnlCell) return;
+                        var pnl = ((last - entry) / entry * 100);
+                        var color = pnl >= 0 ? '#00ff88' : '#ff4444';
+                        priceCell.textContent = '$' + last.toFixed(4);
+                        priceCell.style.color = color;
+                        pnlCell.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%';
+                        pnlCell.style.color = color;
+                    }});
+                }}).catch(function(){{}});
+        }}
+
+        function updateCountdowns() {{
             document.querySelectorAll('.countdown').forEach(function(el) {{
                 var expiry = parseInt(el.getAttribute('data-expiry')) * 1000;
                 var diff = expiry - Date.now();
@@ -425,8 +495,15 @@ def _render_signal_table(signals, tickers=None, now_ts=None):
                 }}
             }});
         }}
+
+        function updateAll() {{
+            updateCountdowns();
+        }}
+
         updateAll();
         setInterval(updateAll, 1000);
+        updatePrices();
+        setInterval(updatePrices, 2000);
     }})();
     </script>
     </div>"""
@@ -485,10 +562,6 @@ def _render_expired_signals():
 def _render_scanner():
     st.title("🔍 Market Scanner")
     _init_scanner_state()
-
-    refresh_count = 0
-    if st.session_state.auto_refresh_on:
-        refresh_count = st_autorefresh(interval=5000, key="scanner_autorefresh")
 
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
@@ -669,7 +742,6 @@ def _render_backtest_results(result: dict, df: pd.DataFrame, engine, initial_bal
 
 def _render_positions():
     st.title("📋 Active Positions")
-    st_autorefresh(interval=1000, key="pos_autorefresh")
     open_trades = _fetch_trades(status="open")
     if not open_trades:
         st.info("No active positions.")
