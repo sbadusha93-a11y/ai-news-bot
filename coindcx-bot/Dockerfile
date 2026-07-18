@@ -19,4 +19,5 @@ EXPOSE 8080
 
 ENV PYTHONUNBUFFERED=1
 
+# Combined bot + dashboard server
 CMD ["python", "combined_server.py"]

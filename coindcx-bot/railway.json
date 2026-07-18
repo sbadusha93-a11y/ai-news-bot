@@ -1,7 +1,7 @@
 {
   "build": {
     "builder": "DOCKERFILE",
-    "watchPatterns": ["src/**", "config/**", "requirements.txt", "Dockerfile"]
+    "watchPatterns": ["src/**", "config/**", "requirements.txt", "Dockerfile", "railway.json"]
   },
   "deploy": {
     "healthcheckPath": "/",
