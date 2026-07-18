@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -80,12 +81,27 @@ def run_dashboard():
     )
 
 
+def _resolve_api_base() -> str:
+    url = os.getenv("BOT_API_URL", "") or os.getenv("BOT_SERVICE_URL", "")
+    if url:
+        return url.rstrip("/")
+    import socket
+    for host in ["http://localhost:8080", "http://127.0.0.1:8080"]:
+        try:
+            s = socket.create_connection((host.split("://")[1].split(":")[0], 8080), timeout=1)
+            s.close()
+            return host
+        except (OSError, socket.error):
+            continue
+    return ""
+
+
 def _live_prices_js(symbols=None, pair_labels=None):
     if symbols is None:
         symbols = ["BTCUSDT", "ETHUSDT"]
     if pair_labels is None:
         pair_labels = {s: s.replace("USDT", "/USDT") for s in symbols}
-    api_base = ""
+    api_base = _resolve_api_base()
     script = f"""
     <div id="live-prices-top" style="display:flex;gap:20px;margin-bottom:16px;flex-wrap:wrap;">
         {''.join(f'<div id="price-{s}" class="price-card"><div class="price-label">{pair_labels.get(s, s)}</div><div class="price-value">--</div><div class="price-change">--</div></div>' for s in symbols)}
@@ -426,6 +442,7 @@ def _render_signal_table(signals, tickers=None, now_ts=None):
         _format_signal_row(s, _live(s["symbol"]), is_stale=now_ts >= s["expiry_ts"])
         for s in signals
     )
+    api_base = _resolve_api_base()
     html = f"""<div>
     <style>
         .signal-table {{ width:100%; border-collapse:collapse; font-size:13px; color:#fff; }}
@@ -448,14 +465,14 @@ def _render_signal_table(signals, tickers=None, now_ts=None):
     <script>
     (function() {{
         var priceSymbols = [];
+        var API = '{api_base}';
         document.querySelectorAll('tr[data-symbol]').forEach(function(tr) {{
             priceSymbols.push(tr.getAttribute('data-symbol'));
         }});
 
         function updatePrices() {{
             if (priceSymbols.length === 0) return;
-            var url = '/api/v1/live_prices?symbols=' + priceSymbols.join(',');
-            fetch(url)
+            fetch(API + '/api/v1/live_prices?symbols=' + priceSymbols.join(','))
                 .then(function(r) {{ return r.json(); }})
                 .then(function(data) {{
                     var prices = data.prices || {{}};
@@ -590,12 +607,14 @@ def _render_scanner():
 def _render_scanner_js(initial_signals):
     import json
     initial_json = json.dumps([safe_json(s) for s in initial_signals]) if initial_signals else "[]"
+    api_base = _resolve_api_base()
     html = f"""
     <div id="scanner-status" style="margin-bottom:8px;color:#888;font-size:13px;"></div>
     <div id="scanner-metrics" style="display:flex;gap:16px;margin-bottom:12px;flex-wrap:wrap;"></div>
     <div id="scanner-table"></div>
     <script>
     (function() {{
+        var API = '{api_base}';
         var signals = {initial_json};
         var lastScan = 0;
         var scanInterval = 180;
@@ -688,7 +707,7 @@ def _render_scanner_js(initial_signals):
             if (rows.length === 0) return;
             var syms = [];
             rows.forEach(function(r) {{ syms.push(r.getAttribute('data-sym')); }});
-            fetch('/api/v1/live_prices?symbols=' + syms.join(','))
+            fetch(API + '/api/v1/live_prices?symbols=' + syms.join(','))
                 .then(function(r) {{ return r.json(); }})
                 .then(function(data) {{
                     var prices = data.prices || {{}};
@@ -712,7 +731,7 @@ def _render_scanner_js(initial_signals):
         }}
 
         function pollSignals() {{
-            fetch('/api/v1/market_scan')
+            fetch(API + '/api/v1/market_scan')
                 .then(function(r) {{ return r.json(); }})
                 .then(function(data) {{
                     var opps = data.opportunities || [];
@@ -762,7 +781,7 @@ def _render_scanner_js(initial_signals):
             if (signals.length === 0 && autoRefresh && !waiting) {{
                 waiting = true;
                 if (status) status.textContent = 'Starting background scan...';
-                fetch('/api/v1/trigger_scan', {{method:'POST'}})
+                fetch(API + '/api/v1/trigger_scan', {{method:'POST'}})
                     .then(function(r) {{ return r.json(); }})
                     .then(function(d) {{
                         if (status) status.textContent = d.message;
