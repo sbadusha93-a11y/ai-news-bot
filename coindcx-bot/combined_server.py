@@ -53,8 +53,19 @@ async def handle_client(client_reader, client_writer):
             pipe(client_reader, target_writer),
             pipe(target_reader, client_writer),
         )
-    except (ConnectionRefusedError, ConnectionResetError, BrokenPipeError, OSError):
-        pass
+    except (ConnectionRefusedError, ConnectionResetError, BrokenPipeError, OSError) as e:
+        try:
+            body = f"<html><body><h1>503 Backend Unavailable</h1><p>{e}</p></body></html>"
+            resp = (
+                f"HTTP/1.1 503 Service Unavailable\r\n"
+                f"Content-Type: text/html\r\n"
+                f"Content-Length: {len(body)}\r\n"
+                f"Connection: close\r\n\r\n{body}"
+            )
+            client_writer.write(resp.encode())
+            await client_writer.drain()
+        except Exception:
+            pass
     finally:
         try:
             client_writer.close()
@@ -74,7 +85,7 @@ def run_bot():
     env["PORT"] = str(API_PORT)
     proc = subprocess.Popen(
         [sys.executable, "-m", "src.main", "--api"],
-        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        env=env,
     )
     return proc
 
@@ -84,7 +95,6 @@ def run_dashboard():
         [sys.executable, "-m", "streamlit", "run", "src/dashboard/app.py",
          f"--server.port={DASH_PORT}", "--server.address=0.0.0.0",
          "--server.headless=true", "--browser.gatherUsageStats=false"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     return proc
 
@@ -92,7 +102,9 @@ def run_dashboard():
 async def main():
     bot_proc = run_bot()
     dash_proc = run_dashboard()
-    time.sleep(3)
+
+    # Wait for both to start
+    await asyncio.sleep(10)
 
     def shutdown(*args):
         bot_proc.terminate()
