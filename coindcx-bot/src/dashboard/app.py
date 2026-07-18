@@ -364,7 +364,7 @@ def _init_scanner_state():
     if "last_full_scan" not in st.session_state:
         st.session_state.last_full_scan = 0
     if "auto_refresh_on" not in st.session_state:
-        st.session_state.auto_refresh_on = True
+        st.session_state.auto_refresh_on = False
     if "using_bot_signals" not in st.session_state:
         st.session_state.using_bot_signals = False
 
