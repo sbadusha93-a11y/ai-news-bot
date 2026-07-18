@@ -40,7 +40,7 @@ async def handle_client(client_reader, client_writer):
         parts = data.decode("utf-8", errors="replace").split("\r\n")[0].split(" ")
         path = parts[1] if len(parts) >= 2 else "/"
 
-        if path == "" or path.startswith(("api/v1/", "docs", "openapi.json", "redoc")):
+        if path.startswith(("/api/v1/", "/docs", "/openapi.json", "/redoc")):
             target_port = API_PORT
         else:
             target_port = DASH_PORT
