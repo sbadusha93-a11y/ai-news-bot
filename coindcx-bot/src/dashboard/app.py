@@ -305,12 +305,18 @@ async def _scan_markets(ex, max_coins, symbols=None):
     return results
 
 
-@st.cache_data(ttl=300)
 def _cached_scan(max_coins: int):
+    key = f"scan_cache_{max_coins}"
+    now = time.time()
+    cached = st.session_state.get(key)
+    if cached and (now - cached["ts"] < 30):
+        return cached["data"]
     async def _run():
         ex = _get_exchange()
         return await _scan_markets(ex, max_coins)
-    return asyncio.run(_run())
+    data = asyncio.run(_run())
+    st.session_state[key] = {"data": data, "ts": now}
+    return data
 
 
 def _init_scanner_state():
@@ -322,6 +328,8 @@ def _init_scanner_state():
         st.session_state.last_full_scan = 0
     if "auto_refresh_on" not in st.session_state:
         st.session_state.auto_refresh_on = True
+    if "using_bot_signals" not in st.session_state:
+        st.session_state.using_bot_signals = False
 
 
 def _format_signal_row(s, live_price=None, is_stale=False):
@@ -501,22 +509,32 @@ def _render_scanner():
     if bot_signals:
         st.session_state.scanner_signals = bot_signals
         st.session_state.last_full_scan = now_ts
+        st.session_state.using_bot_signals = True
 
-    scan_interval = 120
+    scan_interval = 120 if bot_signals else 60
     should_scan = (
         run_scan
         or (st.session_state.auto_refresh_on and st.session_state.last_full_scan == 0)
         or (st.session_state.auto_refresh_on and (now_ts - st.session_state.last_full_scan) > scan_interval)
     )
 
-    if not st.session_state.scanner_signals and st.session_state.auto_refresh_on and st.session_state.last_full_scan == 0:
-        st.info(f"⏳ Waiting for bot scan... signals will appear once the bot completes its analysis cycle")
+    if not st.session_state.scanner_signals and st.session_state.auto_refresh_on:
+        if st.session_state.last_full_scan == 0:
+            st.info("⏳ Running initial market scan... (this may take 60-120s)")
+        else:
+            elapsed = now_ts - st.session_state.last_full_scan
+            st.info(f"⏳ Scanning again in {max(1, scan_interval - elapsed)}s...")
 
-    if should_scan and not bot_signals:
+    if should_scan and not bot_signals and not st.session_state.get("scan_in_progress", False):
+        st.session_state.scan_in_progress = True
         new_signals = _cached_scan(max_coins)
+        st.session_state.scan_in_progress = False
         if new_signals:
             st.session_state.scanner_signals = new_signals
         st.session_state.last_full_scan = now_ts
+
+    if st.session_state.get("scan_in_progress", False):
+        st.info("Scanning in progress... results will appear in ~30-60s")
 
     stale_count = sum(1 for s in st.session_state.scanner_signals if now_ts >= s["expiry_ts"])
     from_bot = any(s.get("from_bot") for s in st.session_state.scanner_signals)

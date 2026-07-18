@@ -226,6 +226,16 @@ class CoinDCXBot:
         if not bot_config["bot"]["auto_trade"]:
             logger.debug("Auto-trade disabled, skipping signal execution")
             return
+        if not self.risk_manager.can_trade():
+            logger.warning("Circuit breaker active: risk limits exceeded, skipping signal execution")
+            return
+
+        max_dd = self.risk_manager.get_metrics().get("max_drawdown", 0)
+        if max_dd >= bot_config["risk"]["max_drawdown"]:
+            logger.critical(f"Max drawdown {max_dd:.1f}% ≥ limit, closing all positions")
+            await self.trade_executor.close_all_positions("max_drawdown_hit")
+            return
+
         for opp in self.last_ranked[:bot_config["coin_selection"]["trade_top_n"]]:
             if opp["direction"] not in ("long", "short"):
                 continue
@@ -235,11 +245,10 @@ class CoinDCXBot:
                 logger.debug(f"Symbol {opp['symbol']} already active, skipping duplicate signal")
                 continue
 
-            if settings.bot_mode != "paper":
-                active = await self.exchange.is_futures_active(opp["symbol"])
-                if not active:
-                    logger.warning(f"{opp['symbol']} futures instrument is not active, skipping")
-                    continue
+            active = await self.exchange.is_futures_active(opp["symbol"])
+            if not active:
+                logger.warning(f"{opp['symbol']} futures instrument is not active, skipping")
+                continue
 
             trade = await self.trade_executor.execute_trade(
                 symbol=opp["symbol"],

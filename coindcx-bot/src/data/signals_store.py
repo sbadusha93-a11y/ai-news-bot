@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 
 SIGNALS_FILE = Path(__file__).parent.parent.parent / "data" / "latest_signals.json"
-BOT_API_URL = os.getenv("BOT_API_URL", os.getenv("RAILWAY_BOT_API_URL", ""))
+_cached_bot_api_url: Optional[str] = None
 
 
 def get_signals_file() -> Path:
@@ -16,64 +16,90 @@ def get_signals_file() -> Path:
     return SIGNALS_FILE
 
 
-def _load_via_api() -> List[Dict]:
-    url = BOT_API_URL or ""
-    if not url:
-        return []
-    if not url.endswith("/api/v1/market_scan"):
-        url = url.rstrip("/") + "/api/v1/market_scan"
+def _get_bot_api_urls() -> List[str]:
+    urls = []
+    env_url = os.getenv("BOT_API_URL", "")
+    if env_url:
+        urls.append(env_url.rstrip("/"))
+    for host in ["localhost", "127.0.0.1"]:
+        urls.append(f"http://{host}:8080")
+    railway_svc = os.getenv("BOT_RAILWAY_URL", "") or os.getenv("BOT_SERVICE_URL", "")
+    if railway_svc:
+        urls.append(railway_svc.rstrip("/"))
+    return list(dict.fromkeys(urls))
+
+
+def _call_api(url: str) -> Optional[List[Dict]]:
+    scan_url = url + "/api/v1/market_scan" if not url.endswith("/api/v1/market_scan") else url
     try:
-        resp = httpx.get(url, timeout=5)
-        if resp.status_code == 200:
-            data = resp.json()
-            opportunities = data.get("opportunities", [])
-            now = datetime.now(timezone.utc)
-            expiry_ts = int(now.timestamp()) + 3600
-            signals = []
-            for opp in opportunities:
-                tf_data = opp.get("analysis", {}).get("timeframes", {})
-                tf_key = list(tf_data.keys())
-                primary_tf = tf_key[0] if tf_key else "4h"
-                last_row = tf_data.get(primary_tf, {}).get("last_row", {})
-                close = last_row.get("close", 0)
-                atr = last_row.get("atr", 0)
-                direction = opp.get("direction", "neutral")
-                sl = None
-                tp1 = tp2 = tp3 = None
-                if direction == "long":
-                    sl = close - (atr * 1.5) if atr > 0 else close * 0.95
-                    tp1 = close + (abs(close - sl) * 2.0) if sl else close * 1.05
-                    tp2 = close + (abs(close - sl) * 3.5) if sl else close * 1.08
-                    tp3 = close + (abs(close - sl) * 5.0) if sl else close * 1.12
-                elif direction == "short":
-                    sl = close + (atr * 1.5) if atr > 0 else close * 1.05
-                    tp1 = close - (abs(close - sl) * 2.0) if sl else close * 0.95
-                    tp2 = close - (abs(close - sl) * 3.5) if sl else close * 0.92
-                    tp3 = close - (abs(close - sl) * 5.0) if sl else close * 0.88
-                signal = "LONG" if direction == "long" else "SHORT" if direction == "short" else "NEUTRAL"
-                signals.append({
-                    "symbol": opp.get("symbol", ""),
-                    "signal": signal,
-                    "confidence": opp.get("confidence", 50),
-                    "entry_price": close,
-                    "current_price": close,
-                    "sl_price": sl,
-                    "tp1_price": tp1,
-                    "tp2_price": tp2,
-                    "tp3_price": tp3,
-                    "trend": last_row.get("st_direction", "neutral"),
-                    "rsi": last_row.get("rsi", 50) or 50,
-                    "macd_dir": last_row.get("macd_signal_line", "neutral"),
-                    "adx": last_row.get("adx", 0) or 0,
-                    "bos": last_row.get("bos", "none"),
-                    "choch": last_row.get("choch", "none"),
-                    "expiry_ts": expiry_ts,
-                    "scanned_at": int(now.timestamp()),
-                    "from_bot": True,
-                })
-            return signals
+        resp = httpx.get(scan_url, timeout=5)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        opportunities = data.get("opportunities", [])
+        if not opportunities:
+            return None
+        now = datetime.now(timezone.utc)
+        expiry_ts = int(now.timestamp()) + 3600
+        signals = []
+        for opp in opportunities:
+            tf_data = opp.get("analysis", {}).get("timeframes", {})
+            tf_key = list(tf_data.keys())
+            primary_tf = tf_key[0] if tf_key else "4h"
+            last_row = tf_data.get(primary_tf, {}).get("last_row", {})
+            close = last_row.get("close", 0)
+            atr = last_row.get("atr", 0)
+            direction = opp.get("direction", "neutral")
+            sl = None
+            tp1 = tp2 = tp3 = None
+            if direction == "long":
+                sl = close - (atr * 1.5) if atr > 0 else close * 0.95
+                tp1 = close + (abs(close - sl) * 2.0) if sl else close * 1.05
+                tp2 = close + (abs(close - sl) * 3.5) if sl else close * 1.08
+                tp3 = close + (abs(close - sl) * 5.0) if sl else close * 1.12
+            elif direction == "short":
+                sl = close + (atr * 1.5) if atr > 0 else close * 1.05
+                tp1 = close - (abs(close - sl) * 2.0) if sl else close * 0.95
+                tp2 = close - (abs(close - sl) * 3.5) if sl else close * 0.92
+                tp3 = close - (abs(close - sl) * 5.0) if sl else close * 0.88
+            signal = "LONG" if direction == "long" else "SHORT" if direction == "short" else "NEUTRAL"
+            signals.append({
+                "symbol": opp.get("symbol", ""),
+                "signal": signal,
+                "confidence": opp.get("confidence", 50),
+                "entry_price": close,
+                "current_price": close,
+                "sl_price": sl,
+                "tp1_price": tp1,
+                "tp2_price": tp2,
+                "tp3_price": tp3,
+                "trend": last_row.get("st_direction", "neutral"),
+                "rsi": last_row.get("rsi", 50) or 50,
+                "macd_dir": last_row.get("macd_signal_line", "neutral"),
+                "adx": last_row.get("adx", 0) or 0,
+                "bos": last_row.get("bos", "none"),
+                "choch": last_row.get("choch", "none"),
+                "expiry_ts": expiry_ts,
+                "scanned_at": int(now.timestamp()),
+                "from_bot": True,
+            })
+        return signals
     except Exception:
-        pass
+        return None
+
+
+def _load_via_api() -> List[Dict]:
+    global _cached_bot_api_url
+    if _cached_bot_api_url:
+        signals = _call_api(_cached_bot_api_url)
+        if signals:
+            return signals
+        _cached_bot_api_url = None
+    for url in _get_bot_api_urls():
+        signals = _call_api(url)
+        if signals:
+            _cached_bot_api_url = url
+            return signals
     return []
 
 

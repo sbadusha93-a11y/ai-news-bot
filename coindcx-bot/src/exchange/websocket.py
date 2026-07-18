@@ -8,6 +8,9 @@ from loguru import logger
 
 
 class CoinDCXWebSocket:
+    MAX_CONSECUTIVE_FAILURES = 5
+    DEEP_SLEEP_INTERVAL = 1800
+
     def __init__(self):
         self.base_urls = [
             "wss://stream.coindcx.com",
@@ -19,11 +22,21 @@ class CoinDCXWebSocket:
         self._max_reconnect_delay = 300
         self._connect_attempts = 0
         self._consecutive_failures = 0
+        self._in_deep_sleep = False
         self._current_url_index = 0
 
     async def connect(self):
         self._connect_attempts += 1
         base_url = self.base_urls[self._current_url_index % len(self.base_urls)]
+
+        if self._consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
+            if not self._in_deep_sleep:
+                self._in_deep_sleep = True
+                logger.warning(f"WebSocket: {self._consecutive_failures} consecutive failures, "
+                               f"entering deep sleep ({self.DEEP_SLEEP_INTERVAL}s)")
+            asyncio.create_task(self._deep_sleep_reconnect())
+            return
+
         for attempt in range(3):
             try:
                 self._ws = await websockets.connect(
@@ -36,12 +49,13 @@ class CoinDCXWebSocket:
                 self._reconnect_delay = 5
                 self._connect_attempts = 0
                 self._consecutive_failures = 0
+                self._in_deep_sleep = False
                 logger.info(f"WebSocket connected to {base_url}")
                 return
             except Exception as e:
                 self._consecutive_failures += 1
                 if "503" in str(e) or "502" in str(e):
-                    logger.warning(f"WebSocket server unavailable ({e}), retry {attempt+1}/3")
+                    logger.debug(f"WebSocket server unavailable ({e}), retry {attempt+1}/3")
                     await asyncio.sleep(5 * (attempt + 1))
                 else:
                     logger.debug(f"WebSocket connection failed (attempt {self._connect_attempts}): {e}")
@@ -51,6 +65,12 @@ class CoinDCXWebSocket:
             self._ws = None
             self._current_url_index += 1
             asyncio.create_task(self._delayed_reconnect())
+
+    async def _deep_sleep_reconnect(self):
+        await asyncio.sleep(self.DEEP_SLEEP_INTERVAL)
+        self._in_deep_sleep = False
+        self._consecutive_failures = self.MAX_CONSECUTIVE_FAILURES - 1
+        await self.connect()
 
     async def _delayed_reconnect(self):
         jitter = random.uniform(0.5, 1.5)
@@ -117,7 +137,8 @@ class CoinDCXWebSocket:
                 if not self._ws:
                     await self.connect()
                     if not self._ws:
-                        await asyncio.sleep(30)
+                        sleep_for = self.DEEP_SLEEP_INTERVAL if self._in_deep_sleep else 30
+                        await asyncio.sleep(sleep_for)
                         continue
                 async for message in self._ws:
                     if not self._running:
