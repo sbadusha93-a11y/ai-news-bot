@@ -13,8 +13,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p data/historical data/models logs
+RUN mkdir -p /app/data /app/logs
 
 EXPOSE 8080
 
-CMD ["python", "-m", "src.main", "--api"]
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "combined_server.py"]

@@ -1,5 +1,6 @@
-"""Runs bot API + Streamlit dashboard behind a single port proxy.
-No BOT_API_URL env var needed — both services share one container.
+"""Runs bot API + Streamlit dashboard behind a single-port TCP proxy.
+Both services share one container — no BOT_API_URL env var needed.
+WebSocket (Streamlit) and HTTP (bot API) are both handled transparently.
 """
 import asyncio
 import os
@@ -8,37 +9,64 @@ import subprocess
 import sys
 import time
 
-import httpx
-import uvicorn
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
-
 PORT = int(os.getenv("PORT", "8080"))
 API_PORT = 8081
 DASH_PORT = 8501
 
-proxy = FastAPI()
-proxy.add_middleware(
-    CORSMiddleware, allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
-)
 
-@proxy.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"])
-async def proxy_handler(request: Request, path: str):
-    if not path or path.startswith(("api/v1/", "docs", "openapi.json", "redoc")):
-        target = f"http://127.0.0.1:{API_PORT}/{path}"
-    else:
-        qs = request.url.query
-        target = f"http://127.0.0.1:{DASH_PORT}/{path}" + (f"?{qs}" if qs else "")
-    async with httpx.AsyncClient(timeout=120) as client:
-        body = await request.body()
-        headers = dict(request.headers)
-        headers.pop("host", None)
-        resp = await client.request(
-            request.method, target, headers=headers, content=body,
+async def pipe(reader, writer):
+    try:
+        while True:
+            data = await reader.read(65536)
+            if not data:
+                break
+            writer.write(data)
+            await writer.drain()
+    except (ConnectionResetError, BrokenPipeError, OSError):
+        pass
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+
+async def handle_client(client_reader, client_writer):
+    try:
+        data = await client_reader.read(4096)
+        if not data:
+            return
+
+        parts = data.decode("utf-8", errors="replace").split("\r\n")[0].split(" ")
+        path = parts[1] if len(parts) >= 2 else "/"
+
+        if path == "" or path.startswith(("api/v1/", "docs", "openapi.json", "redoc")):
+            target_port = API_PORT
+        else:
+            target_port = DASH_PORT
+
+        target_reader, target_writer = await asyncio.open_connection("127.0.0.1", target_port)
+        target_writer.write(data)
+        await target_writer.drain()
+
+        await asyncio.gather(
+            pipe(client_reader, target_writer),
+            pipe(target_reader, client_writer),
         )
-    return Response(content=resp.content, status_code=resp.status_code, headers=dict(resp.headers))
+    except (ConnectionRefusedError, ConnectionResetError, BrokenPipeError, OSError):
+        pass
+    finally:
+        try:
+            client_writer.close()
+        except Exception:
+            pass
+
+
+async def start_proxy():
+    server = await asyncio.start_server(handle_client, "0.0.0.0", PORT)
+    print(f"[proxy] Listening on 0.0.0.0:{PORT}")
+    async with server:
+        await server.serve_forever()
 
 
 def run_bot():
@@ -66,9 +94,6 @@ async def main():
     dash_proc = run_dashboard()
     time.sleep(3)
 
-    config = uvicorn.Config(proxy, host="0.0.0.0", port=PORT, log_level="info")
-    server = uvicorn.Server(config)
-
     def shutdown(*args):
         bot_proc.terminate()
         dash_proc.terminate()
@@ -78,7 +103,7 @@ async def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    await server.serve()
+    await start_proxy()
 
 
 if __name__ == "__main__":
