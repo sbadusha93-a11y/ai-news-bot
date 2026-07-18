@@ -24,10 +24,16 @@ class PositionMonitor:
         self._running = False
 
     async def monitor_positions(self, positions: Dict[str, Dict]):
+        if not positions:
+            return
+        all_tickers = await self.exchange.fetch_all_tickers()
+        if not all_tickers:
+            return
+
         prices = {}
         for symbol, position in list(positions.items()):
             try:
-                ticker = await self.exchange.fetch_ticker(symbol)
+                ticker = all_tickers.get(symbol)
                 if not ticker:
                     continue
 

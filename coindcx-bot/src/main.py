@@ -42,6 +42,7 @@ from src.alerts.telegram import TelegramAlert
 from src.alerts.discord import DiscordAlert
 from src.alerts.email import EmailAlert
 from src.alerts.notification import DesktopNotification
+from src.data.signals_store import save_bot_signals
 from src.utils.logger import setup_logger
 from src.utils.watchdog import Watchdog
 from src.api.server import app, set_bot_instance
@@ -69,7 +70,7 @@ class CoinDCXBot:
         self.market_analyzer = MarketAnalyzer()
         self.ml_trainer = MLTrainer()
         self.trade_executor = TradeExecutor(
-            self.exchange, self.risk_manager, self.position_sizer
+            self.exchange, self.risk_manager, self.position_sizer, database=self.database
         )
         self.position_monitor = PositionMonitor(
             self.exchange, self.risk_manager, self.position_sizer,
@@ -85,6 +86,7 @@ class CoinDCXBot:
 
         try:
             await self.database.initialize()
+            await self.database.close_stale_trades()
             open_trades = await self.database.get_open_trades()
             for t in open_trades:
                 self.trade_executor.active_positions[t.symbol] = {
@@ -108,6 +110,7 @@ class CoinDCXBot:
                     "trailing_stop_active": bool(t.trailing_stop_active) if t.trailing_stop_active is not None else False,
                     "break_even_active": bool(t.break_even_active) if t.break_even_active is not None else False,
                     "is_paper": bool(t.is_paper) if t.is_paper is not None else True,
+                    "db_trade_id": t.id,
                 }
             logger.info(f"Database initialized — restored {len(open_trades)} open positions")
         except Exception as e:
@@ -158,8 +161,15 @@ class CoinDCXBot:
         logger.info("Scanning market...")
         markets = await self.data_fetcher.scan_all_markets()
         if markets.empty:
-            logger.warning("No markets found")
-            return
+            fallback_symbols = bot_config.get("coin_selection", {}).get("whitelist", [])
+            if not fallback_symbols:
+                fallback_symbols = ["BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT", "XRP_USDT",
+                                     "ADA_USDT", "DOGE_USDT", "DOT_USDT", "LINK_USDT", "AVAX_USDT",
+                                     "MATIC_USDT", "ATOM_USDT", "UNI_USDT", "LTC_USDT", "BCH_USDT",
+                                     "XLM_USDT", "TRX_USDT", "FIL_USDT", "APT_USDT", "ARB_USDT"]
+            import pandas as pd
+            markets = pd.DataFrame({"symbol": fallback_symbols, "volume": [1]*len(fallback_symbols)})
+            logger.info(f"No tickers from API, using {len(fallback_symbols)} fallback symbols")
 
         logger.info(f"Scanning {len(markets)} markets...")
         analyses = {}
@@ -173,22 +183,22 @@ class CoinDCXBot:
                     try:
                         df_dict = await asyncio.wait_for(
                             self.data_fetcher.fetch_multi_timeframe_data(symbol),
-                            timeout=30,
+                            timeout=60,
                         )
-                        if not df_dict:
+                        if not df_dict or all(df.empty for df in df_dict.values()):
                             return None
                         analysis = await self.strategy_engine.analyze_symbol(symbol, df_dict)
                         analysis["sentiment"] = sentiment
                         return symbol, analysis
                     except asyncio.TimeoutError:
-                        logger.warning(f"Timeout {symbol}")
+                        logger.debug(f"Timeout {symbol}")
                         return None
                     except Exception as e:
                         if attempt == 0:
-                            logger.warning(f"Retry {symbol} after error: {e}")
+                            logger.debug(f"Retry {symbol} after error: {e}")
                             await asyncio.sleep(1)
                         else:
-                            logger.warning(f"Error {symbol}: {e}")
+                            logger.debug(f"Error {symbol}: {e}")
                             return None
 
         results = await asyncio.gather(*[_do_one(s) for s in symbols])
@@ -209,6 +219,7 @@ class CoinDCXBot:
                 f"(Conf: {opp['confidence']:.1f}%, Risk: {opp['risk_score']:.1f}%)"
             )
 
+        save_bot_signals(self.last_ranked)
         return self.last_ranked
 
     async def execute_signals(self):
@@ -249,15 +260,23 @@ class CoinDCXBot:
                 await self.discord.send_trade_alert(trade)
                 await self.notification.send_trade_alert(trade)
 
-                await self.database.save_trade(trade)
-
             await asyncio.sleep(1)
 
-    async def monitor_positions(self):
-        if self.trade_executor.active_positions:
-            await self.position_monitor.monitor_positions(
-                self.trade_executor.active_positions
-            )
+    async def _run_monitor(self):
+        while self.running:
+            try:
+                if self.trade_executor.active_positions:
+                    await asyncio.wait_for(
+                        self.position_monitor.monitor_positions(
+                            self.trade_executor.active_positions
+                        ),
+                        timeout=60,
+                    )
+            except asyncio.TimeoutError:
+                logger.warning("Position monitor cycle timed out")
+            except Exception as e:
+                logger.error(f"Position monitor error: {e}")
+            await asyncio.sleep(10)
 
     async def train_ml(self, symbols: List[str]):
         if not settings.ml_training_enabled:
@@ -280,7 +299,6 @@ class CoinDCXBot:
         try:
             await self.scan_market()
             await self.execute_signals()
-            await self.monitor_positions()
         except (httpx.ConnectError, httpx.RemoteProtocolError, OSError) as e:
             logger.error(f"Network error in cycle: {e}\n{traceback.format_exc()}")
             await self.watchdog.recover_from("exchange", e)
@@ -301,6 +319,7 @@ class CoinDCXBot:
         logger.info(f"Bot started in {settings.bot_mode.upper()} mode")
 
         asyncio.create_task(self.websocket.start())
+        asyncio.create_task(self._run_monitor())
 
         cycle_count = 0
         while self.running:
@@ -322,6 +341,7 @@ class CoinDCXBot:
     async def stop(self):
         logger.info("Shutting down bot...")
         self.running = False
+        self.position_monitor.stop()
         await self.trade_executor.close_all_positions("bot_shutdown")
         await self.websocket.stop()
         await self.data_cache.close()
@@ -338,6 +358,9 @@ class CoinDCXBot:
 async def main():
     bot = CoinDCXBot()
     try:
+        if settings.railway_lite_mode:
+            logger.info("Running in Railway lite mode — memory optimizations active")
+
         if "--api" in sys.argv:
             logger.info("Starting API server...")
             api_task = asyncio.create_task(
@@ -346,11 +369,16 @@ async def main():
                 ).serve()
             )
             bot_task = asyncio.create_task(bot.start())
-            await asyncio.gather(api_task, bot_task)
+            done, pending = await asyncio.wait(
+                [api_task, bot_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
         else:
             await bot.start()
-    except KeyboardInterrupt:
-        logger.info("Received keyboard interrupt")
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("Received shutdown signal")
     finally:
         await bot.stop()
 

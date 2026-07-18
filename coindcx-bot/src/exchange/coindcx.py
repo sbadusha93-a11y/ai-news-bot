@@ -87,16 +87,24 @@ class CoinDCXExchange:
             return cached
         parts = symbol.split("_")
         if len(parts) == 3:
-            return f"{parts[0]}-{parts[1]}_{parts[2]}"
-        if len(parts) == 2:
-            return f"B-{parts[0]}_{parts[1]}"
-        for q in ["USDT", "BTC", "INR", "ETH", "USDC", "BUSD", "DAI", "PAX"]:
-            if name.endswith(q) and len(name) > len(q):
-                return f"B-{name[:-len(q)]}_{q}"
-        return symbol
+            result = f"{parts[0]}-{parts[1]}_{parts[2]}"
+        elif len(parts) == 2:
+            result = f"B-{parts[0]}_{parts[1]}"
+        else:
+            found = False
+            result = symbol
+            for q in ["USDT", "BTC", "INR", "ETH", "USDC", "BUSD", "DAI", "PAX"]:
+                if name.endswith(q) and len(name) > len(q):
+                    result = f"B-{name[:-len(q)]}_{q}"
+                    found = True
+                    break
+            if not found:
+                logger.warning(f"No pair mapping found for {symbol}, using raw")
+        return result
 
     async def fetch_ohlcv(
-        self, symbol: str, timeframe: str = "4h", limit: int = 200
+        self, symbol: str, timeframe: str = "4h", limit: int = 200,
+        start_time: Optional[int] = None, end_time: Optional[int] = None,
     ) -> List[List[float]]:
         await self._ensure_pair_cache()
         last_error = None
@@ -121,13 +129,18 @@ class CoinDCXExchange:
                     }
                     pd_label, agg = aggregation_map.get(timeframe, ("1h", 60))
 
-                    base_limit = {"1m": 500, "15m": 500, "1h": 500, "1d": 500}.get(resolution, 500)
+                    base_limit = {"1m": 1000, "15m": 1000, "1h": 1000, "1d": 1000}.get(resolution, 1000)
                     fetch_limit = min(int(limit * max(agg / 60, 1) * 1.5), base_limit)
 
+                    params = {"pair": pair, "interval": resolution, "limit": fetch_limit}
+                    if start_time is not None:
+                        params["startTime"] = start_time
+                    if end_time is not None:
+                        params["endTime"] = end_time
+
                     resp = await http.get(
-                        f"{self.base_url}/market_data/candles",
-                        params={"pair": pair, "interval": resolution, "limit": fetch_limit},
-                        timeout=10,
+                        f"https://public.coindcx.com/market_data/candles",
+                        params=params, timeout=httpx.Timeout(15.0, connect=10.0),
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -201,32 +214,54 @@ class CoinDCXExchange:
                 return None
 
     async def fetch_all_tickers(self, quote_currency: str = "USDT") -> Dict[str, Dict]:
-        async with self._rate_limiter:
-            await self._rate_limit()
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                http = await self._get_http()
-                resp = await http.get(f"{self.base_url}/exchange/ticker")
-                if resp.status_code == 200:
-                    data = resp.json()
-                    tickers = {}
-                    for item in data:
-                        name = item.get("market", "")
-                        if not name.endswith(quote_currency):
+                async with self._rate_limiter:
+                    await self._rate_limit()
+                    http = await self._get_http()
+                    resp = await http.get(
+                        f"{self.base_url}/exchange/ticker",
+                        timeout=httpx.Timeout(30.0, connect=15.0),
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        if not data:
+                            logger.warning(f"fetch_all_tickers attempt {attempt+1}/{max_retries}: empty response")
+                            if attempt < max_retries - 1:
+                                await asyncio.sleep(2 ** attempt)
+                                continue
+                            return {}
+                        tickers = {}
+                        for item in data:
+                            name = item.get("market", "")
+                            if not name.endswith(quote_currency):
+                                continue
+                            symbol = name.replace("-", "_")
+                            tickers[symbol] = {
+                                "symbol": symbol,
+                                "last": float(item.get("last_price", 0)),
+                                "bid": float(item.get("bid", 0)),
+                                "ask": float(item.get("ask", 0)),
+                                "high": float(item.get("high", 0)),
+                                "low": float(item.get("low", 0)),
+                                "volume": float(item.get("volume", 0)),
+                                "baseVolume": float(item.get("volume", 0)),
+                                "quoteVolume": float(item.get("volume", 0)) * float(item.get("last_price", 0)),
+                                "percentage": float(item.get("change_24_hour", 0)),
+                            }
+                        return tickers
+                    elif resp.status_code in (429, 502, 503):
+                        logger.warning(f"fetch_all_tickers attempt {attempt+1}/{max_retries}: HTTP {resp.status_code}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)
                             continue
-                        symbol = name.replace("-", "_")
-                        tickers[symbol] = {
-                            "symbol": symbol,
-                            "last": float(item.get("last_price", 0)),
-                            "bid": float(item.get("bid", 0)),
-                            "ask": float(item.get("ask", 0)),
-                            "high": float(item.get("high", 0)),
-                            "low": float(item.get("low", 0)),
-                            "volume": float(item.get("volume", 0)),
-                            "baseVolume": float(item.get("volume", 0)),
-                            "quoteVolume": float(item.get("volume", 0)) * float(item.get("last_price", 0)),
-                            "percentage": float(item.get("change_24_hour", 0)),
-                        }
-                    return tickers
+                    return {}
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as e:
+                logger.warning(f"fetch_all_tickers attempt {attempt+1}/{max_retries}: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
                 return {}
             except Exception as e:
                 logger.error(f"Failed to fetch all tickers: {e}")
@@ -260,21 +295,26 @@ class CoinDCXExchange:
             await self._rate_limit()
             try:
                 http = await self._get_http()
+                await self._ensure_pair_cache()
+                pair = self._get_coin_dcx_pair(symbol)
                 payload = {
                     "side": side.upper(),
                     "order_type": order_type.upper(),
-                    "market": symbol.replace("_", ""),
+                    "market": pair,
                     "price_per_unit": price or 0,
                     "total_quantity": amount,
                     "timestamp": int(time.time() * 1000),
                 }
                 headers = self._sign_request(payload)
+                endpoint = f"{self.base_url}/exchange/v1/orders/create"
+                if settings.bot_mode == "live":
+                    endpoint = f"{self.base_url}/exchange/v1/derivatives/futures/orders/create"
                 resp = await http.post(
-                    f"{self.base_url}/exchange/v1/orders/create",
-                    headers=headers, data=json.dumps(payload),
+                    endpoint, headers=headers, data=json.dumps(payload),
                 )
                 if resp.status_code == 200:
                     return resp.json()
+                logger.error(f"Order failed for {symbol}: {resp.status_code} {resp.text}")
                 return None
             except Exception as e:
                 logger.error(f"Failed to create order: {e}")

@@ -14,112 +14,15 @@ import numpy as np
 from src.config import settings, bot_config
 from src.exchange.coindcx import CoinDCXExchange
 from src.data.fetcher import DataFetcher
-from src.data.database import Database
 from src.indicators.technical import TechnicalIndicators
 from src.indicators.smc import SMCIndicators
 from src.indicators.volume import VolumeIndicators
 from src.indicators.price_action import PriceActionIndicators
 from src.strategy.scorer import TradeScorer
 from src.backtest.engine import BacktestEngine
-
-
-_EXCHANGE: Optional[CoinDCXExchange] = None
-_DB: Optional[Database] = None
-
-
-def _get_db():
-    global _DB
-    if _DB is None:
-        _DB = Database()
-        _run_async(_DB.initialize())
-    return _DB
-
-
-def _fetch_trades(limit=100, status=None):
-    try:
-        db = _get_db()
-        trades = _run_async(db.get_trades(limit=limit, status=status))
-        return trades
-    except Exception:
-        return []
-
-
-def _calc_metrics(trades):
-    total = len(trades)
-    if total == 0:
-        return {}
-    wins = [t for t in trades if t.pnl is not None and t.pnl > 0]
-    losses = [t for t in trades if t.pnl is not None and t.pnl < 0]
-    win_count = len(wins)
-    loss_count = len(losses)
-    win_rate = (win_count / total * 100) if total > 0 else 0
-    total_pnl = sum(t.pnl for t in trades if t.pnl is not None)
-    avg_win = (sum(t.pnl for t in wins) / win_count) if win_count > 0 else 0
-    avg_loss = (abs(sum(t.pnl for t in losses)) / loss_count) if loss_count > 0 else 0
-    profit_factor = (sum(t.pnl for t in wins) / abs(sum(t.pnl for t in losses))) if loss_count > 0 and sum(t.pnl for t in losses) != 0 else (sum(t.pnl for t in wins) if win_count > 0 else 1)
-    avg_trade = total_pnl / total if total > 0 else 0
-    expectancy = (win_rate / 100 * avg_win) - ((1 - win_rate / 100) * avg_loss) if total > 0 else 0
-
-    pnls = [t.pnl for t in trades if t.pnl is not None]
-    if len(pnls) > 1:
-        sharpe = (np.mean(pnls) / np.std(pnls) * np.sqrt(365)) if np.std(pnls) > 0 else 0
-        neg_pnls = [p for p in pnls if p < 0]
-        sortino = (np.mean(pnls) / np.std(neg_pnls) * np.sqrt(365)) if neg_pnls and np.std(neg_pnls) > 0 else 0
-    else:
-        sharpe = sortino = 0
-
-    eq = []
-    bal = 10000
-    eq.append(bal)
-    for t in trades:
-        if t.pnl is not None:
-            bal += t.pnl
-            eq.append(bal)
-    max_bal = eq[0]
-    max_dd = 0
-    for v in eq:
-        max_bal = max(max_bal, v)
-        dd = (max_bal - v) / max_bal * 100
-        max_dd = max(max_dd, dd)
-
-    return {
-        "total_trades": total,
-        "winning_trades": win_count,
-        "losing_trades": loss_count,
-        "win_rate": round(win_rate, 2),
-        "total_pnl": round(total_pnl, 2),
-        "profit_factor": round(profit_factor, 2),
-        "sharpe_ratio": round(sharpe, 2),
-        "sortino_ratio": round(sortino, 2),
-        "max_drawdown": round(max_dd, 2),
-        "average_trade": round(avg_trade, 2),
-        "expectancy": round(expectancy, 2),
-        "average_win": round(avg_win, 2),
-        "average_loss": round(avg_loss, 2),
-        "equity_curve": eq,
-    }
-
-def _get_exchange():
-    global _EXCHANGE
-    if _EXCHANGE is None:
-        _EXCHANGE = CoinDCXExchange()
-    return _EXCHANGE
-
-
-def _get_fetcher():
-    if "fetcher" not in st.session_state:
-        st.session_state.fetcher = DataFetcher(_get_exchange())
-    return st.session_state.fetcher
-
-
-_ASYNC_LOOP: asyncio.AbstractEventLoop = None
-
-def _run_async(coro):
-    global _ASYNC_LOOP
-    if _ASYNC_LOOP is None or _ASYNC_LOOP.is_closed():
-        _ASYNC_LOOP = asyncio.new_event_loop()
-        asyncio.set_event_loop(_ASYNC_LOOP)
-    return _ASYNC_LOOP.run_until_complete(coro)
+from src.data.signals_store import load_bot_signals
+from src.dashboard.chatbot import render_chatbot
+from src.dashboard.shared import _get_exchange, _get_db, _fetch_trades, _calc_metrics, _run_async, _get_fetcher, _fetch_all_tickers, _fetch_ohlcv
 
 
 def run_dashboard():
@@ -148,6 +51,7 @@ def run_dashboard():
         "Trade History",
         "Performance",
         "Settings",
+        "AI Assistant",
     ]
     choice = st.sidebar.radio("Navigation", menu)
 
@@ -165,6 +69,8 @@ def run_dashboard():
         _render_performance()
     elif choice == "Settings":
         _render_settings()
+    elif choice == "AI Assistant":
+        render_chatbot()
 
     st.sidebar.markdown("---")
     st.sidebar.info(
@@ -198,7 +104,7 @@ def _render_dashboard():
 
     count = st_autorefresh(interval=3000, key="dash_autorefresh")
 
-    tickers = _run_async(_get_exchange().fetch_all_tickers())
+    tickers = _run_async(_fetch_all_tickers())
     btc_key = "BTCUSDT" if "BTCUSDT" in tickers else next((k for k in tickers if "BTC" in k and "USDT" in k and "WBTC" not in k), "")
     eth_key = "ETHUSDT" if "ETHUSDT" in tickers else next((k for k in tickers if "ETH" in k and "USDT" in k and "WETH" not in k), "")
     btc = tickers.get(btc_key, {})
@@ -268,6 +174,8 @@ def _get_tf_hours():
 
 
 async def _scan_markets(ex, max_coins, symbols=None):
+    if ex is None:
+        ex = CoinDCXExchange()
     tech = TechnicalIndicators()
     smc = SMCIndicators()
     vol_ind = VolumeIndicators()
@@ -277,6 +185,7 @@ async def _scan_markets(ex, max_coins, symbols=None):
     tp_levels = risk_cfg["take_profit_levels"]
     tf_hours = _get_tf_hours()
     now_ts = datetime.now(timezone.utc)
+    results = []
 
     if symbols:
         tickers = await ex.fetch_all_tickers()
@@ -287,10 +196,10 @@ async def _scan_markets(ex, max_coins, symbols=None):
                         if s.endswith("USDT") and t.get("volume", 0) > 0}
         pairs = sorted(usdt_tickers.items(), key=lambda x: x[1]["volume"], reverse=True)[:max_coins]
 
-    sem = asyncio.Semaphore(10)
+    sem = asyncio.Semaphore(15)
     async def _fetch_one(s):
         async with sem:
-            return await ex.fetch_ohlcv(s, f"{tf_hours}h", 200)
+            return await asyncio.wait_for(ex.fetch_ohlcv(s, f"{tf_hours}h", 50), timeout=10)
     try:
         all_ohlcv = await asyncio.wait_for(
             asyncio.gather(*[_fetch_one(s) for s, _ in pairs]),
@@ -396,6 +305,14 @@ async def _scan_markets(ex, max_coins, symbols=None):
     return results
 
 
+@st.cache_data(ttl=300)
+def _cached_scan(max_coins: int):
+    async def _run():
+        ex = _get_exchange()
+        return await _scan_markets(ex, max_coins)
+    return asyncio.run(_run())
+
+
 def _init_scanner_state():
     if "scanner_signals" not in st.session_state:
         st.session_state.scanner_signals = []
@@ -407,7 +324,7 @@ def _init_scanner_state():
         st.session_state.auto_refresh_on = True
 
 
-def _format_signal_row(s, live_price=None):
+def _format_signal_row(s, live_price=None, is_stale=False):
     coin = s["symbol"].replace("_", "/")
     sig = s["signal"]
     sig_icon = "🟢" if sig == "LONG" else "🔴" if sig == "SHORT" else "⚪"
@@ -418,11 +335,12 @@ def _format_signal_row(s, live_price=None):
     current = live_price if live_price else s.get("current_price", s["entry_price"])
     pnl_pct = ((current - s["entry_price"]) / s["entry_price"] * 100) if s["entry_price"] else 0
     pnl_color = "#00ff88" if pnl_pct >= 0 else "#ff4444"
+    stale_attr = ' data-stale="1"' if is_stale else ""
 
     def price_str(p):
         return f"${p:,.4f}" if p else "—"
 
-    return f"""<tr>
+    return f"""<tr{stale_attr}>
         <td><b>{coin}</b></td>
         <td style="color:{'#00ff88' if sig=='LONG' else '#ff4444' if sig=='SHORT' else '#888'}">{sig_icon} {sig}</td>
         <td>{s['confidence']:.0f}%</td>
@@ -443,9 +361,12 @@ def _format_signal_row(s, live_price=None):
     </tr>"""
 
 
-def _render_signal_table(signals, tickers=None):
+def _render_signal_table(signals, tickers=None, now_ts=None):
     if not signals:
         return
+
+    if now_ts is None:
+        now_ts = int(datetime.now(timezone.utc).timestamp())
 
     def _live(sym):
         if tickers:
@@ -453,15 +374,21 @@ def _render_signal_table(signals, tickers=None):
             return t.get("last", None)
         return None
 
-    rows = "\n".join(_format_signal_row(s, _live(s["symbol"])) for s in signals)
+    rows = "\n".join(
+        _format_signal_row(s, _live(s["symbol"]), is_stale=now_ts >= s["expiry_ts"])
+        for s in signals
+    )
     html = f"""<div>
     <style>
         .signal-table {{ width:100%; border-collapse:collapse; font-size:13px; color:#fff; }}
         .signal-table th {{ background:#1a1a2e; padding:8px; text-align:left; border-bottom:2px solid #333; }}
         .signal-table td {{ padding:6px 8px; border-bottom:1px solid #222; }}
         .signal-table tr:hover {{ background:#1a1a3e; }}
+        .signal-table tr[data-stale="1"] {{ opacity:0.6; }}
+        .signal-table tr[data-stale="1"] td {{ border-bottom:1px dashed #444; }}
         .countdown {{ font-family:monospace; font-weight:bold; color:#ffcc00; }}
         .expired-countdown {{ color:#ff4444; }}
+        .stale-countdown {{ color:#ff8800 !important; }}
     </style>
     <table class="signal-table">
         <thead><tr>
@@ -476,14 +403,17 @@ def _render_signal_table(signals, tickers=None):
             document.querySelectorAll('.countdown').forEach(function(el) {{
                 var expiry = parseInt(el.getAttribute('data-expiry')) * 1000;
                 var diff = expiry - Date.now();
+                var tr = el.closest('tr');
                 if (diff <= 0) {{
-                    el.innerHTML = '🔴 EXPIRED';
-                    el.className = 'expired-countdown';
+                    el.innerHTML = '⚠️ STALE';
+                    el.className = 'countdown stale-countdown';
+                    if (tr) tr.setAttribute('data-stale', '1');
                 }} else {{
                     var h = Math.floor(diff / 3600000);
                     var m = Math.floor((diff % 3600000) / 60000);
                     var s = Math.floor((diff % 60000) / 1000);
                     el.innerHTML = h + 'h ' + String(m).padStart(2,'0') + 'm ' + String(s).padStart(2,'0') + 's';
+                    if (tr) tr.removeAttribute('data-stale');
                 }}
             }});
         }}
@@ -567,102 +497,70 @@ def _render_scanner():
     max_coins = 30 if "Quick" in scan_type else 100
     now_ts = int(datetime.now(timezone.utc).timestamp())
 
-    if not st.session_state.scanner_signals and st.session_state.auto_refresh_on and st.session_state.last_full_scan == 0:
-        st.info(f"⏳ Initial scan in progress... fetching {max_coins} markets from exchange")
-
-    if run_scan or (st.session_state.auto_refresh_on and st.session_state.last_full_scan == 0):
-        st.session_state.scanner_signals = []
-        st.session_state.expired_signals = []
-        ex = _get_exchange()
-        results = _run_async(_scan_markets(ex, max_coins))
-        st.session_state.scanner_signals = results
+    bot_signals = load_bot_signals()
+    if bot_signals:
+        st.session_state.scanner_signals = bot_signals
         st.session_state.last_full_scan = now_ts
-        st.rerun()
 
-    active = []
-    expired_now = []
-    for s in st.session_state.scanner_signals:
-        if now_ts >= s["expiry_ts"]:
-            expired_now.append(s)
-        else:
-            active.append(s)
+    scan_interval = 120
+    should_scan = (
+        run_scan
+        or (st.session_state.auto_refresh_on and st.session_state.last_full_scan == 0)
+        or (st.session_state.auto_refresh_on and (now_ts - st.session_state.last_full_scan) > scan_interval)
+    )
 
-    if expired_now:
-        ex = _get_exchange()
-        expired_symbols = list(set(s["symbol"] for s in expired_now))
-        try:
-            tickers = _run_async(ex.fetch_all_tickers())
-        except Exception:
-            tickers = {}
-        new_expired = []
-        for s in expired_now:
-            sym = s["symbol"]
-            ticker = tickers.get(sym, {})
-            price_at_expiry = ticker.get("last", None)
-            pnl = _calc_pnl(s, price_at_expiry)
-            sl_pnl = 0
-            if s["sl_price"] and price_at_expiry:
-                if s["signal"] == "LONG":
-                    sl_pnl = (s["sl_price"] - s["entry_price"]) / s["entry_price"] * 100
-                else:
-                    sl_pnl = (s["entry_price"] - s["sl_price"]) / s["entry_price"] * 100
-            entry = {
-                "symbol": s["symbol"],
-                "signal": s["signal"],
-                "entry_price": s["entry_price"],
-                "sl_price": s["sl_price"],
-                "tp1_price": s["tp1_price"],
-                "tp2_price": s["tp2_price"],
-                "tp3_price": s["tp3_price"],
-                "price_at_expiry": price_at_expiry,
-                "pnl_percent": round(pnl, 2),
-                "sl_pnl_percent": round(sl_pnl, 2),
-                "scanned_at": s["scanned_at"],
-                "expired_at": now_ts,
-            }
-            new_expired.append(entry)
+    if not st.session_state.scanner_signals and st.session_state.auto_refresh_on and st.session_state.last_full_scan == 0:
+        st.info(f"⏳ Waiting for bot scan... signals will appear once the bot completes its analysis cycle")
 
-        st.session_state.expired_signals.extend(new_expired)
-        st.session_state.scanner_signals = active
+    if should_scan and not bot_signals:
+        new_signals = _cached_scan(max_coins)
+        if new_signals:
+            st.session_state.scanner_signals = new_signals
+        st.session_state.last_full_scan = now_ts
 
-        if expired_symbols and len(st.session_state.scanner_signals) < max_coins:
-            st.toast(f"Re-scanning {len(expired_symbols)} expired markets...", icon="🔄")
-            re_results = _run_async(_scan_markets(ex, max_coins, symbols=expired_symbols))
-            if re_results:
-                existing_symbols = {s["symbol"] for s in st.session_state.scanner_signals}
-                for r in re_results:
-                    if r["symbol"] not in existing_symbols:
-                        st.session_state.scanner_signals.append(r)
-                        existing_symbols.add(r["symbol"])
+    stale_count = sum(1 for s in st.session_state.scanner_signals if now_ts >= s["expiry_ts"])
+    from_bot = any(s.get("from_bot") for s in st.session_state.scanner_signals)
 
-    if active:
-        long_count = sum(1 for s in active if s["signal"] == "LONG")
-        short_count = sum(1 for s in active if s["signal"] == "SHORT")
-        neutral_count = sum(1 for s in active if s["signal"] == "NEUTRAL")
+    if st.session_state.scanner_signals:
+        long_count = sum(1 for s in st.session_state.scanner_signals if s["signal"] == "LONG")
+        short_count = sum(1 for s in st.session_state.scanner_signals if s["signal"] == "SHORT")
+        neutral_count = sum(1 for s in st.session_state.scanner_signals if s["signal"] == "NEUTRAL")
 
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Active Markets", len(active))
-        col2.metric("🟢 LONG Signals", long_count)
-        col3.metric("🔴 SHORT Signals", short_count)
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("Signals", len(st.session_state.scanner_signals))
+        col2.metric("🟢 LONG", long_count)
+        col3.metric("🔴 SHORT", short_count)
         col4.metric("⚪ Neutral", neutral_count)
+        col5.metric("⚠️ Stale", stale_count)
 
-        live_tickers = _run_async(_get_exchange().fetch_all_tickers())
-        _render_signal_table(active, tickers=live_tickers)
+        if from_bot:
+            st.caption("🤖 Signals from bot's strategy engine")
+
+        live_tickers = {}
+        try:
+            ticker_data = _run_async(_fetch_all_tickers())
+            if ticker_data:
+                live_tickers = ticker_data
+        except Exception:
+            pass
+        _render_signal_table(st.session_state.scanner_signals, tickers=live_tickers, now_ts=now_ts)
 
         st.download_button(
             "📥 Download CSV",
-            pd.DataFrame(active).to_csv(index=False),
+            pd.DataFrame(st.session_state.scanner_signals).to_csv(index=False),
             "market_scan.csv", "text/csv",
         )
+
+        if stale_count > 0:
+            st.caption(f"⚠️ {stale_count} signal(s) are stale. Click **Scan Now** to refresh.")
     elif not run_scan:
-        st.info("No active signals. Click **🚀 Scan Now** to start scanning.")
+        st.info("No active signals. Waiting for bot scan or click **🚀 Scan Now** for manual scan.")
 
     _render_expired_signals()
 
-    if st.session_state.expired_signals:
-        if st.button("🗑️ Clear Expired History", type="secondary"):
-            st.session_state.expired_signals = []
-            st.rerun()
+    if st.session_state.expired_signals and st.button("🗑️ Clear Expired History", type="secondary"):
+        st.session_state.expired_signals = []
+        st.rerun()
 
 
 def _render_backtest():
@@ -681,12 +579,11 @@ def _render_backtest():
         initial_balance = st.number_input("Initial Balance ($)", 1000, 100000, 10000, step=1000)
 
     if st.button("▶️ Run Backtest", type="primary"):
-        ex = _get_exchange()
         tf_limit = {1: 500, 4: 300, 12: 200, 24: 200}
         limit = min(tf_limit.get({"1h": 1, "4h": 4, "12h": 12, "1d": 24}.get(timeframe, 4), 300) * days, 500)
 
         with st.spinner(f"Fetching {days} days of {timeframe} data for {symbol}..."):
-            ohlcv = _run_async(ex.fetch_ohlcv(symbol, timeframe, limit))
+            ohlcv = _run_async(_fetch_ohlcv(symbol, timeframe, limit))
 
         if len(ohlcv) < 100:
             st.error(f"Not enough data ({len(ohlcv)} candles). Need at least 100.")
@@ -760,7 +657,7 @@ def _render_positions():
         st.info("No active positions.")
         return
 
-    tickers = _run_async(_get_exchange().fetch_all_tickers())
+    tickers = _run_async(_fetch_all_tickers())
     rows = []
     for t in open_trades:
         sym = t.symbol.replace("_", "/")
@@ -779,7 +676,6 @@ def _render_positions():
             "Symbol": sym, "Side": side, "Entry": f"${entry:,.4f}",
             "Current": f"${current:,.4f}",
             "PnL": f"{pnl_pct:+.2f}%",
-            "PnL×{lev}": f"{pnl_pct * lev:+.2f}%",
             "SL": f"${sl:,.4f}" if sl else "—",
             "TP": f"${tp:,.4f}" if tp else "—",
             "Qty": t.quantity,
@@ -801,8 +697,7 @@ def _render_history():
             "ID": t.id, "Symbol": t.symbol.replace("_", "/"),
             "Side": t.side.upper(), "Entry": f"${t.entry_price:,.4f}" if t.entry_price else "—",
             "Exit": f"${t.exit_price:,.4f}" if t.exit_price else "—",
-            "PnL": f"${t.pnl:+,.2f}" if t.pnl is not None else "—",
-            "PnL%": f"{t.pnl_percent:+.2f}%" if t.pnl_percent is not None else "—",
+            "PnL": f"${t.pnl:+,.2f} ({t.pnl_percent:+.2f}%)" if t.pnl is not None and t.pnl_percent is not None else ("—" if t.pnl is None else f"${t.pnl:+,.2f}"),
             "Status": t.status.upper(),
             "Reason": t.reason_exit or "—",
             "Time": t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "—",

@@ -40,19 +40,53 @@ class DataFetcher:
         symbol: str,
         timeframe: str = "4h",
         limit: int = 500,
+        from_date: Optional[datetime] = None,
     ) -> pd.DataFrame:
-        ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe, limit)
-        if not ohlcv:
-            return pd.DataFrame()
+        if from_date is None or limit <= 1000:
+            ohlcv = await self.exchange.fetch_ohlcv(symbol, timeframe, limit)
+            if not ohlcv:
+                return pd.DataFrame()
+            df = pd.DataFrame(
+                ohlcv,
+                columns=["timestamp", "open", "high", "low", "close", "volume"],
+            )
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df.set_index("timestamp", inplace=True)
+            df.sort_index(inplace=True)
+            return df
 
-        df = pd.DataFrame(
-            ohlcv,
-            columns=["timestamp", "open", "high", "low", "close", "volume"],
-        )
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df.set_index("timestamp", inplace=True)
-        df.sort_index(inplace=True)
-        return df
+        all_dfs = []
+        page_size = 1000
+        tf_minutes = self.timeframe_minutes.get(timeframe, 60)
+        end_ts = int(datetime.now().timestamp() * 1000)
+        start_ts = int(from_date.timestamp() * 1000)
+
+        while end_ts > start_ts and len(all_dfs) * page_size < limit:
+            ohlcv = await self.exchange.fetch_ohlcv(
+                symbol, timeframe, page_size, end_time=end_ts,
+            )
+            if not ohlcv:
+                break
+            df = pd.DataFrame(
+                ohlcv,
+                columns=["timestamp", "open", "high", "low", "close", "volume"],
+            )
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df.set_index("timestamp", inplace=True)
+            df.sort_index(inplace=True)
+            all_dfs.append(df)
+            earliest = df.index[0]
+            end_ts = int(earliest.timestamp() * 1000) - (tf_minutes * 60 * 1000)
+            if len(all_dfs) > 50:
+                break
+            await asyncio.sleep(0.1)
+
+        if not all_dfs:
+            return pd.DataFrame()
+        combined = pd.concat(all_dfs)
+        combined = combined[~combined.index.duplicated(keep="first")]
+        combined.sort_index(inplace=True)
+        return combined.tail(limit)
 
     async def fetch_multi_timeframe_data(
         self, symbol: str, timeframes: Optional[List[str]] = None
@@ -65,7 +99,7 @@ class DataFetcher:
             try:
                 return await asyncio.wait_for(
                     self.fetch_historical_data(symbol, tf, limit=300 if tf in ("15m", "1h") else 200),
-                    timeout=20,
+                    timeout=45,
                 )
             except asyncio.TimeoutError:
                 return pd.DataFrame()

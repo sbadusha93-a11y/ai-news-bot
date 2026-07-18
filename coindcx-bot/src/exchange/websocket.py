@@ -18,17 +18,12 @@ class CoinDCXWebSocket:
         self._reconnect_delay = 5
         self._max_reconnect_delay = 300
         self._connect_attempts = 0
-        self._max_connect_attempts = 10
         self._consecutive_failures = 0
+        self._current_url_index = 0
 
     async def connect(self):
         self._connect_attempts += 1
-        if self._connect_attempts > self._max_connect_attempts:
-            logger.warning(f"WebSocket max reconnect attempts ({self._max_connect_attempts}) reached")
-            self._running = False
-            return
-
-        base_url = self.base_urls[0]
+        base_url = self.base_urls[self._current_url_index % len(self.base_urls)]
         for attempt in range(3):
             try:
                 self._ws = await websockets.connect(
@@ -54,6 +49,7 @@ class CoinDCXWebSocket:
 
         if self._running:
             self._ws = None
+            self._current_url_index += 1
             asyncio.create_task(self._delayed_reconnect())
 
     async def _delayed_reconnect(self):
