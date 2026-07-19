@@ -46,6 +46,8 @@ class Trade(Base):
     lowest_price = Column(Float, nullable=True)
     trailing_stop_active = Column(Integer, default=0)
     break_even_active = Column(Integer, default=0)
+    tp_hit_level = Column(Integer, nullable=True)
+    tp_hit_time = Column(DateTime, nullable=True)
     is_paper = Column(Integer, default=1)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -105,6 +107,17 @@ class Database:
 
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(self._migrate_v2)
+
+    @staticmethod
+    def _migrate_v2(conn):
+        from sqlalchemy import inspect, text
+        inspector = inspect(conn)
+        columns = {c["name"] for c in inspector.get_columns("trades")}
+        for col in ("tp_hit_level", "tp_hit_time"):
+            if col not in columns:
+                col_type = "INTEGER" if col == "tp_hit_level" else "DATETIME"
+                conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col} {col_type}"))
 
     async def get_session(self) -> Optional[AsyncSession]:
         if self._session_maker is None:

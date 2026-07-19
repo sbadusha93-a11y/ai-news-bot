@@ -19,6 +19,11 @@ class MLPredictor:
             self.models.load_all_models()
             self._loaded = True
 
+    def _maybe_unload(self):
+        if getattr(settings, 'railway_lite_mode', False):
+            self.models.unload_models()
+            self._loaded = False
+
     def predict(self, df: pd.DataFrame) -> dict:
         self._ensure_loaded()
 

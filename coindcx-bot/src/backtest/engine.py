@@ -27,6 +27,8 @@ class BacktestEngine:
         self.price_action = PriceActionIndicators()
         self.trades: List[Dict] = []
         self.equity_curve: List[float] = [initial_balance]
+        self._current_day = None
+        self._current_week = None
 
     async def run(
         self,
@@ -52,6 +54,22 @@ class BacktestEngine:
             row = df.iloc[:i + 1]
             current = df.iloc[i]
             price = current["close"]
+
+            candle_day = df.index[i].date()
+            candle_week = df.index[i].isocalendar()[1]
+            if self._current_day is not None and candle_day != self._current_day:
+                self._current_day = candle_day
+                self.risk_manager.reset_daily()
+                self.risk_manager.consecutive_losses = 0
+                self.risk_manager.is_paused = False
+            elif self._current_day is None:
+                self._current_day = candle_day
+                self._current_week = candle_week
+            if self._current_week is not None and candle_week != self._current_week:
+                self._current_week = candle_week
+                self.risk_manager.reset_weekly()
+            if self.risk_manager.is_paused:
+                self.risk_manager.is_paused = False
 
             if position:
                 sl = position["stop_loss"]
@@ -179,6 +197,7 @@ class BacktestEngine:
             self.trades.append(position)
             self.equity_curve.append(balance)
 
+        self.balance = balance
         return self._compute_metrics()
 
     def _is_bullish_signal(self, df: pd.DataFrame) -> bool:

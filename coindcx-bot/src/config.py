@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_positions: int = 3
     max_risk_per_trade: float = 1.0
+    railway_lite_mode: bool = False
+    railway_volume_path: str = "/data"
 
     class Config:
         env_file = str(Path(__file__).parent.parent / ".env")
@@ -36,6 +38,12 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if settings.railway_lite_mode:
+    volume = settings.railway_volume_path
+    settings.ml_model_path = f"{volume}/models"
+    if not settings.database_url or settings.database_url == "sqlite+aiosqlite:///data/bot.db":
+        settings.database_url = f"sqlite+aiosqlite:///{volume}/bot.db"
 
 CONFIG_PATH = Path(__file__).parent.parent / "config"
 

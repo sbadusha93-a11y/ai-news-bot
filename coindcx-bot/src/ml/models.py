@@ -55,6 +55,9 @@ class MLModels:
             self.load_model(name)
         return self.models
 
+    def unload_models(self):
+        self.models.clear()
+
     def get_ensemble_prediction(
         self, features: np.ndarray
     ) -> Tuple[float, float, float]:

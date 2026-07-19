@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from loguru import logger
 
 from src.config import bot_config, settings
+from src.data.database import Database
 from src.exchange.coindcx import CoinDCXExchange
 from src.risk.manager import RiskManager
 from src.risk.sizing import PositionSizer
@@ -16,10 +17,12 @@ class TradeExecutor:
         exchange: CoinDCXExchange,
         risk_manager: RiskManager,
         position_sizer: PositionSizer,
+        database: Optional[Database] = None,
     ):
         self.exchange = exchange
         self.risk_manager = risk_manager
         self.position_sizer = position_sizer
+        self.database = database
         self.active_positions: Dict[str, Dict] = {}
         self.config = bot_config["bot"]
 
@@ -81,6 +84,11 @@ class TradeExecutor:
             )
 
         if trade:
+            trade.pop("id", None)
+            if self.database:
+                trade_id = await self.database.save_trade(trade)
+                trade["db_trade_id"] = trade_id
+                logger.info(f"Trade saved to DB: id={trade_id}")
             self.active_positions[symbol] = trade
             logger.info(f"Trade opened: {direction.upper()} {symbol} @ {entry_price}")
 
@@ -191,6 +199,15 @@ class TradeExecutor:
             pnl = (entry_price - exit_price) * quantity
             pnl_percent = (1 - exit_price / entry_price) * 100
 
+        tp_hit_level = None
+        tp_hit_time = None
+        if reason and reason.startswith("take_profit_"):
+            try:
+                tp_hit_level = int(reason.split("_")[-1])
+                tp_hit_time = datetime.now(timezone.utc)
+            except (ValueError, IndexError):
+                pass
+
         trade_result = {
             **position,
             "exit_price": exit_price,
@@ -198,10 +215,25 @@ class TradeExecutor:
             "pnl": round(pnl, 2),
             "pnl_percent": round(pnl_percent, 2),
             "reason_exit": reason,
+            "tp_hit_level": tp_hit_level,
+            "tp_hit_time": tp_hit_time.isoformat() if tp_hit_time else None,
             "status": "closed",
         }
 
         self.risk_manager.record_trade(trade_result)
+
+        db_trade_id = position.get("db_trade_id")
+        if db_trade_id and self.database:
+            await self.database.update_trade(db_trade_id, {
+                "status": "closed",
+                "exit_price": exit_price,
+                "exit_time": datetime.now(timezone.utc),
+                "pnl": round(pnl, 2),
+                "pnl_percent": round(pnl_percent, 2),
+                "reason_exit": reason,
+                "tp_hit_level": tp_hit_level,
+                "tp_hit_time": tp_hit_time,
+            })
 
         if settings.bot_mode == "live":
             try:

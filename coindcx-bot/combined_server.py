@@ -9,6 +9,8 @@ import subprocess
 import sys
 import time
 
+import uvicorn
+
 PORT = int(os.getenv("PORT", "8080"))
 API_PORT = 8081
 DASH_PORT = 8501
@@ -55,10 +57,10 @@ async def handle_client(client_reader, client_writer):
         )
     except (ConnectionRefusedError, ConnectionResetError, BrokenPipeError, OSError) as e:
         try:
-            body = f"<html><body><h1>503 Backend Unavailable</h1><p>{e}</p></body></html>"
+            body = f'{{"error":"backend_unavailable","detail":"{e}"}}'
             resp = (
                 f"HTTP/1.1 503 Service Unavailable\r\n"
-                f"Content-Type: text/html\r\n"
+                f"Content-Type: application/json\r\n"
                 f"Content-Length: {len(body)}\r\n"
                 f"Connection: close\r\n\r\n{body}"
             )
@@ -80,14 +82,11 @@ async def start_proxy():
         await server.serve_forever()
 
 
-def run_bot():
-    env = os.environ.copy()
-    env["PORT"] = str(API_PORT)
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "src.main", "--api"],
-        env=env,
-    )
-    return proc
+async def run_api():
+    from src.api.server import app
+    config = uvicorn.Config(app, host="0.0.0.0", port=API_PORT, log_level="info")
+    server = uvicorn.Server(config)
+    await server.serve()
 
 
 def run_dashboard():
@@ -100,22 +99,20 @@ def run_dashboard():
 
 
 async def main():
-    bot_proc = run_bot()
     dash_proc = run_dashboard()
-
-    # Wait for both to start
-    await asyncio.sleep(10)
+    await asyncio.sleep(3)
 
     def shutdown(*args):
-        bot_proc.terminate()
         dash_proc.terminate()
-        bot_proc.wait()
         dash_proc.wait()
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    await start_proxy()
+    await asyncio.gather(
+        run_api(),
+        start_proxy(),
+    )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
 from loguru import logger
@@ -53,6 +53,23 @@ class PositionMonitor:
             except Exception as e:
                 logger.error(f"Error monitoring {symbol}: {e}")
 
+    def _position_price(self, position: Dict, current_price: float) -> float:
+        """Returns the effective price for exit evaluation.
+        Paper mode: tracks market delta from first observation (live-like behavior).
+        Live mode: uses current_price directly.
+        """
+        if not position.get("is_paper", False):
+            return current_price
+
+        entry = position["entry_price"]
+        first = position.get("paper_first_price")
+
+        if first is None:
+            position["paper_first_price"] = current_price
+            return entry
+
+        return entry + (current_price - first)
+
     def _evaluate_exit(
         self, position: Dict, current_price: float
     ) -> Optional[Dict]:
@@ -63,36 +80,38 @@ class PositionMonitor:
         tp2 = position.get("take_profit_2", 0)
         tp3 = position.get("take_profit_3", 0)
 
+        price = self._position_price(position, current_price)
+
         if direction == "long":
-            if current_price <= sl:
+            if price <= sl:
                 return {"reason": "stop_loss"}
-            if tp3 > 0 and current_price >= tp3:
+            if tp3 > 0 and price >= tp3:
                 return {"reason": "take_profit_3"}
-            if tp2 > 0 and current_price >= tp2:
+            if tp2 > 0 and price >= tp2:
                 return {"reason": "take_profit_2"}
-            if tp1 > 0 and current_price >= tp1:
+            if tp1 > 0 and price >= tp1:
                 return {"reason": "take_profit_1"}
         else:
-            if current_price >= sl:
+            if price >= sl:
                 return {"reason": "stop_loss"}
-            if tp3 > 0 and current_price <= tp3:
+            if tp3 > 0 and price <= tp3:
                 return {"reason": "take_profit_3"}
-            if tp2 > 0 and current_price <= tp2:
+            if tp2 > 0 and price <= tp2:
                 return {"reason": "take_profit_2"}
-            if tp1 > 0 and current_price <= tp1:
+            if tp1 > 0 and price <= tp1:
                 return {"reason": "take_profit_1"}
 
         # trailing stop
         if position.get("trailing_stop_active"):
             trailing = position.get("trailing_stop_price", sl)
-            if (direction == "long" and current_price <= trailing) or \
-               (direction == "short" and current_price >= trailing):
+            if (direction == "long" and price <= trailing) or \
+               (direction == "short" and price >= trailing):
                 return {"reason": "trailing_stop"}
 
         if position.get("break_even_active"):
             be = position.get("break_even_price", entry)
-            if (direction == "long" and current_price <= be) or \
-               (direction == "short" and current_price >= be):
+            if (direction == "long" and price <= be) or \
+               (direction == "short" and price >= be):
                 return {"reason": "break_even"}
 
         return None
@@ -109,11 +128,13 @@ class PositionMonitor:
             entry = position["entry_price"]
             sl = position["stop_loss"]
 
+            pos_price = self._position_price(position, price)
+
             if direction == "long":
-                if price > position.get("highest_price", entry):
-                    position["highest_price"] = price
+                if pos_price > position.get("highest_price", entry):
+                    position["highest_price"] = pos_price
                     new_sl, activated = self.position_sizer.calculate_trailing_stop(
-                        price, entry, 0, direction,
+                        pos_price, entry, 0, direction,
                         position["highest_price"], None,
                     )
                     if activated:
@@ -121,7 +142,7 @@ class PositionMonitor:
                         position["trailing_stop_price"] = new_sl
 
             be_price, be_activated = self.position_sizer.calculate_break_even_stop(
-                price, entry, direction,
+                pos_price, entry, direction,
             )
             if be_activated:
                 position["break_even_active"] = True

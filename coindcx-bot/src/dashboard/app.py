@@ -24,6 +24,7 @@ from src.strategy.scorer import TradeScorer
 from src.backtest.engine import BacktestEngine
 from src.data.signals_store import load_bot_signals
 from src.dashboard.chatbot import render_chatbot
+from src.api.server import safe_json
 from src.dashboard.shared import _get_exchange, _get_db, _fetch_trades, _calc_metrics, _run_async, _get_fetcher, _fetch_all_tickers, _fetch_ohlcv
 
 
@@ -254,18 +255,14 @@ async def _scan_markets(ex, max_coins, symbols=None):
     async def _fetch_one(s):
         async with sem:
             return await asyncio.wait_for(ex.fetch_ohlcv(s, f"{tf_hours}h", 50), timeout=10)
-    try:
-        all_ohlcv = await asyncio.wait_for(
-            asyncio.gather(*[_fetch_one(s) for s, _ in pairs]),
-            timeout=120,
-        )
-    except asyncio.TimeoutError:
-        logger.warning(f"Market scan timed out after 120s ({len(pairs)} pairs)")
-        return results
+    all_ohlcv = await asyncio.wait_for(
+        asyncio.gather(*[_fetch_one(s) for s, _ in pairs], return_exceptions=True),
+        timeout=120,
+    )
 
     for i, ((symbol, ticker), ohlcv) in enumerate(zip(pairs, all_ohlcv)):
         try:
-            if ohlcv is None or len(ohlcv) < 50:
+            if isinstance(ohlcv, Exception) or ohlcv is None or len(ohlcv) < 50:
                 continue
 
             df = pd.DataFrame(ohlcv, columns=["timestamp", "open", "high", "low", "close", "volume"])
@@ -606,7 +603,11 @@ def _render_scanner():
 
 def _render_scanner_js(initial_signals):
     import json
-    initial_json = json.dumps([safe_json(s) for s in initial_signals]) if initial_signals else "[]"
+    cfg = bot_config["coin_selection"]
+    trade_top_n = cfg.get("trade_top_n", 5)
+    min_conf = bot_config["bot"].get("min_confidence", 85)
+    filtered = [s for s in (initial_signals or []) if s.get("confidence", 0) >= min_conf][:trade_top_n]
+    initial_json = json.dumps([safe_json(s) for s in filtered]) if filtered else "[]"
     api_base = _resolve_api_base()
     html = f"""
     <div id="scanner-status" style="margin-bottom:8px;color:#888;font-size:13px;"></div>
@@ -616,6 +617,8 @@ def _render_scanner_js(initial_signals):
     (function() {{
         var API = '{api_base}';
         var signals = {initial_json};
+        var TRADE_TOP_N = {trade_top_n};
+        var MIN_CONF = {min_conf};
         var lastScan = 0;
         var scanInterval = 180;
         var autoRefresh = {str(st.session_state.auto_refresh_on).lower()};
@@ -769,9 +772,10 @@ def _render_scanner_js(initial_signals):
                                 from_bot: true
                             }};
                         }});
-                        renderTable(formatted);
+                        var filtered = formatted.filter(function(s) {{ return (s.confidence || 0) >= MIN_CONF; }}).slice(0, TRADE_TOP_N);
+                        renderTable(filtered);
                         var status = document.getElementById('scanner-status');
-                        if (status) status.textContent = 'Last update: ' + new Date().toLocaleTimeString();
+                        if (status) status.textContent = 'Last update: ' + new Date().toLocaleTimeString() + ' (showing ' + filtered.length + '/' + formatted.length + ' signals)';
                     }}
                 }}).catch(function(){{}});
         }}
@@ -925,6 +929,7 @@ def _render_positions():
             "SL": f"${sl:,.4f}" if sl else "—",
             "TP": f"${tp:,.4f}" if tp else "—",
             "Qty": t.quantity,
+            "Opened": t.entry_time.strftime("%m-%d %H:%M:%S") if t.entry_time else "—",
         })
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True, hide_index=True)
@@ -937,16 +942,33 @@ def _render_history():
         st.info("No trade history yet.")
         return
 
+    def _fmt_time(dt):
+        return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "—"
+
+    def _fmt_tp_info(t):
+        if not t.reason_exit or not t.reason_exit.startswith("take_profit_"):
+            return "—"
+        level = getattr(t, 'tp_hit_level', None)
+        hit_time = getattr(t, 'tp_hit_time', None)
+        hit_time_str = _fmt_time(hit_time)
+        if level and hit_time_str != "—":
+            return f"TP{level} @ {hit_time_str}"
+        return t.reason_exit.replace("_", " ").title()
+
     rows = []
     for t in all_trades:
         rows.append({
-            "ID": t.id, "Symbol": t.symbol.replace("_", "/"),
-            "Side": t.side.upper(), "Entry": f"${t.entry_price:,.4f}" if t.entry_price else "—",
+            "ID": t.id,
+            "Symbol": t.symbol.replace("_", "/"),
+            "Side": t.side.upper(),
+            "Entry": f"${t.entry_price:,.4f}" if t.entry_price else "—",
             "Exit": f"${t.exit_price:,.4f}" if t.exit_price else "—",
             "PnL": f"${t.pnl:+,.2f} ({t.pnl_percent:+.2f}%)" if t.pnl is not None and t.pnl_percent is not None else ("—" if t.pnl is None else f"${t.pnl:+,.2f}"),
             "Status": t.status.upper(),
-            "Reason": t.reason_exit or "—",
-            "Time": t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "—",
+            "Reason": t.reason_exit.replace("_", " ").title() if t.reason_exit else "—",
+            "Entry Time": _fmt_time(t.entry_time),
+            "Exit Time": _fmt_time(t.exit_time),
+            "TP Hit": _fmt_tp_info(t),
         })
     df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True, hide_index=True)

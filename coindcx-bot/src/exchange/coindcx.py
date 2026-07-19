@@ -108,7 +108,7 @@ class CoinDCXExchange:
     ) -> List[List[float]]:
         await self._ensure_pair_cache()
         last_error = None
-        max_attempts = 1
+        max_attempts = 3
         for attempt in range(max_attempts):
             async with self._rate_limiter:
                 await self._rate_limit()
@@ -123,7 +123,7 @@ class CoinDCXExchange:
                     }
                     resolution = tf_map.get(timeframe, "1h")
                     aggregation_map = {
-                        "1m": ("1m", 1), "5m": ("5m", 5), "15m": ("15m", 15), "30m": ("30m", 30),
+                        "1m": ("1min", 1), "5m": ("5min", 5), "15m": ("15min", 15), "30m": ("30min", 30),
                         "1h": ("1h", 60), "2h": ("2h", 120), "4h": ("4h", 240), "6h": ("6h", 360),
                         "8h": ("8h", 480), "12h": ("12h", 720), "1d": ("1d", 1440), "3d": ("3d", 4320), "1w": ("1w", 10080),
                     }
@@ -170,20 +170,22 @@ class CoinDCXExchange:
                                 row["close"], row["volume"],
                             ])
                         return ohlcv
+                    if resp.status_code != 200:
+                        logger.warning(f"OHLCV fetch for {symbol} returned HTTP {resp.status_code}")
                     return []
                 except httpx.ConnectError as e:
                     last_error = e
                     if attempt < max_attempts - 1:
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(2)
                     else:
-                        logger.debug(f"Failed to fetch OHLCV for {symbol}: {e}")
+                        logger.warning(f"Failed to fetch OHLCV for {symbol}: {e}")
                         return []
                 except Exception as e:
                     last_error = e
                     if attempt < max_attempts - 1:
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(2)
                     else:
-                        logger.debug(f"Failed to fetch OHLCV for {symbol}: {e}")
+                        logger.warning(f"Failed to fetch OHLCV for {symbol}: {e}")
                         return []
 
     async def fetch_ticker(self, symbol: str) -> Optional[Dict]:

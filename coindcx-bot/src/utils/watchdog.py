@@ -82,8 +82,10 @@ class Watchdog:
         max_failures = 3
 
         if self._consecutive_failures[error_name] > max_failures:
-            logger.warning(f"Too many consecutive failures for '{error_name}' ({self._consecutive_failures[error_name]}). Forcing restart.")
-            os._exit(1)
+            logger.warning(f"Too many consecutive failures for '{error_name}' ({self._consecutive_failures[error_name]}). Sending shutdown signal.")
+            self._running = False
+            asyncio.get_event_loop().stop()
+            return
 
         if error_name in self._recovery_actions:
             try:
