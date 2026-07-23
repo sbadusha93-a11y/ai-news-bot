@@ -44,8 +44,8 @@ class Trade(Base):
     exit_time = Column(DateTime, nullable=True)
     highest_price = Column(Float, nullable=True)
     lowest_price = Column(Float, nullable=True)
-    trailing_stop_active = Column(Integer, default=0)
-    break_even_active = Column(Integer, default=0)
+    trailing_stop_price = Column(Float, nullable=True)
+    break_even_price = Column(Float, nullable=True)
     tp_hit_level = Column(Integer, nullable=True)
     tp_hit_time = Column(DateTime, nullable=True)
     is_paper = Column(Integer, default=1)
@@ -118,6 +118,9 @@ class Database:
             if col not in columns:
                 col_type = "INTEGER" if col == "tp_hit_level" else "DATETIME"
                 conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col} {col_type}"))
+        for col in ("trailing_stop_price", "break_even_price"):
+            if col not in columns:
+                conn.execute(text(f"ALTER TABLE trades ADD COLUMN {col} FLOAT"))
 
     async def get_session(self) -> Optional[AsyncSession]:
         if self._session_maker is None:
@@ -129,11 +132,11 @@ class Database:
         filtered = {k: v for k, v in trade_data.items() if k in valid_columns}
         if "entry_time" in filtered and isinstance(filtered["entry_time"], str):
             filtered["entry_time"] = datetime.fromisoformat(filtered["entry_time"])
+        session = await self.get_session()
+        if session is None:
+            logger.warning("Database not initialized, skipping save_trade")
+            return None
         try:
-            session = await self.get_session()
-            if session is None:
-                logger.warning("Database not initialized, skipping save_trade")
-                return None
             async with session.begin():
                 trade = Trade(**filtered)
                 session.add(trade)
@@ -142,16 +145,21 @@ class Database:
         except Exception as e:
             logger.error(f"Failed to save trade: {e}")
             return None
+        finally:
+            await session.close()
 
     async def update_trade(self, trade_id: int, update_data: Dict):
         session = await self.get_session()
         if session is None:
             return
-        async with session.begin():
-            result = await session.get(Trade, trade_id)
-            if result:
-                for key, value in update_data.items():
-                    setattr(result, key, value)
+        try:
+            async with session.begin():
+                result = await session.get(Trade, trade_id)
+                if result:
+                    for key, value in update_data.items():
+                        setattr(result, key, value)
+        finally:
+            await session.close()
 
     async def get_trades(
         self,
@@ -164,12 +172,15 @@ class Database:
         session = await self.get_session()
         if session is None:
             return []
-        query = select(Trade).order_by(Trade.created_at.desc())
-        if status:
-            query = query.where(Trade.status == status)
-        query = query.offset(offset).limit(limit)
-        result = await session.execute(query)
-        return result.scalars().all()
+        try:
+            query = select(Trade).order_by(Trade.created_at.desc())
+            if status:
+                query = query.where(Trade.status == status)
+            query = query.offset(offset).limit(limit)
+            result = await session.execute(query)
+            return result.scalars().all()
+        finally:
+            await session.close()
 
     async def get_open_trades(self) -> List[Trade]:
         return await self.get_trades(status="open")
@@ -182,40 +193,49 @@ class Database:
         session = await self.get_session()
         if session is None:
             return
-        async with session.begin():
-            log = TradeLog(
-                trade_id=trade_id,
-                event_type=event_type,
-                message=message,
-                indicator_values=indicator_values,
-                market_conditions=market_conditions,
-            )
-            session.add(log)
+        try:
+            async with session.begin():
+                log = TradeLog(
+                    trade_id=trade_id,
+                    event_type=event_type,
+                    message=message,
+                    indicator_values=indicator_values,
+                    market_conditions=market_conditions,
+                )
+                session.add(log)
+        finally:
+            await session.close()
 
     async def update_performance(self, metrics: Dict):
         session = await self.get_session()
         if session is None:
             return
-        async with session.begin():
-            pm = PerformanceMetric(**metrics)
-            session.add(pm)
+        try:
+            async with session.begin():
+                pm = PerformanceMetric(**metrics)
+                session.add(pm)
+        finally:
+            await session.close()
 
     async def clear_all_trades(self):
         session = await self.get_session()
         if session is None:
             return
-        async with session.begin():
-            from sqlalchemy import delete
-            await session.execute(delete(TradeLog))
-            await session.execute(delete(Trade))
-            await session.execute(delete(PerformanceMetric))
-            logger.info("All trades, logs, and metrics cleared")
+        try:
+            async with session.begin():
+                from sqlalchemy import delete
+                await session.execute(delete(TradeLog))
+                await session.execute(delete(Trade))
+                await session.execute(delete(PerformanceMetric))
+                logger.info("All trades, logs, and metrics cleared")
+        finally:
+            await session.close()
 
     async def close_stale_trades(self):
+        session = await self.get_session()
+        if session is None:
+            return
         try:
-            session = await self.get_session()
-            if session is None:
-                return
             async with session.begin():
                 from sqlalchemy import update
                 cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -231,6 +251,8 @@ class Database:
                     logger.info(f"Closed {result.rowcount} stale trades older than 24h")
         except Exception as e:
             logger.error(f"Failed to close stale trades: {e}")
+        finally:
+            await session.close()
 
     async def close(self):
         if self._engine:

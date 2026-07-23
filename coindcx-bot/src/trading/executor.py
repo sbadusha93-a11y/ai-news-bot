@@ -11,6 +11,9 @@ from src.risk.manager import RiskManager
 from src.risk.sizing import PositionSizer
 
 
+TRADE_FEE_RATE = 0.00075  # 0.075% typical futures taker fee
+
+
 class TradeExecutor:
     def __init__(
         self,
@@ -72,6 +75,13 @@ class TradeExecutor:
             logger.error(f"Position sizing error for {symbol}: {pos_size['error']}")
             return None
 
+        if entry_price <= 0 or stop_loss <= 0:
+            logger.error(f"Invalid prices for {symbol}: entry={entry_price}, sl={stop_loss}")
+            return None
+        if direction not in ("long", "short"):
+            logger.error(f"Invalid direction for {symbol}: {direction}")
+            return None
+
         if settings.bot_mode == "paper":
             trade = await self._execute_paper_trade(
                 symbol, direction, entry_price, stop_loss,
@@ -124,8 +134,8 @@ class TradeExecutor:
             "entry_time": datetime.now(timezone.utc).isoformat(),
             "highest_price": entry_price if direction == "long" else 0,
             "lowest_price": entry_price if direction == "short" else 0,
-            "trailing_stop_active": False,
-            "break_even_active": False,
+            "trailing_stop_price": None,
+            "break_even_price": None,
             "is_paper": True,
         }
 
@@ -149,6 +159,7 @@ class TradeExecutor:
             order = await self.exchange.create_order(
                 symbol, "limit", direction,
                 pos_size["position_size"], entry_price,
+                leverage=self.config["leverage"],
             )
             if not order:
                 logger.error(f"Failed to place order for {symbol}")
@@ -169,11 +180,11 @@ class TradeExecutor:
                 "trade_quality_score": quality_score,
                 "reason_entry": reason,
                 "status": "open",
-            "entry_time": datetime.now(timezone.utc).isoformat(),
-            "highest_price": entry_price if direction == "long" else 0,
+                "entry_time": datetime.now(timezone.utc).isoformat(),
+                "highest_price": entry_price if direction == "long" else 0,
                 "lowest_price": entry_price if direction == "short" else 0,
-                "trailing_stop_active": False,
-                "break_even_active": False,
+                "trailing_stop_price": None,
+                "break_even_price": None,
                 "is_paper": False,
             }
         except Exception as e:
@@ -192,12 +203,33 @@ class TradeExecutor:
         entry_price = position["entry_price"]
         quantity = position["quantity"]
 
+        if settings.bot_mode == "live":
+            try:
+                order = await self.exchange.create_order(
+                    symbol, "market",
+                    "sell" if direction == "long" else "buy",
+                    quantity, None,
+                    leverage=self.config["leverage"],
+                )
+                if order:
+                    fill_price = float(order.get("price_per_unit", order.get("avg_price", 0)))
+                    if fill_price > 0:
+                        exit_price = fill_price
+            except Exception as e:
+                logger.error(f"Failed to close live position for {symbol}: {e}")
+
+        entry_fee = entry_price * quantity * TRADE_FEE_RATE
+        exit_fee = exit_price * quantity * TRADE_FEE_RATE
+        total_fees = entry_fee + exit_fee
+
         if direction == "long":
-            pnl = (exit_price - entry_price) * quantity
-            pnl_percent = (exit_price / entry_price - 1) * 100
+            gross_pnl = (exit_price - entry_price) * quantity
+            pnl = gross_pnl - total_fees
+            pnl_percent = ((exit_price - entry_price) / entry_price) * 100
         else:
-            pnl = (entry_price - exit_price) * quantity
-            pnl_percent = (1 - exit_price / entry_price) * 100
+            gross_pnl = (entry_price - exit_price) * quantity
+            pnl = gross_pnl - total_fees
+            pnl_percent = ((entry_price - exit_price) / entry_price) * 100
 
         tp_hit_level = None
         tp_hit_time = None
@@ -235,24 +267,30 @@ class TradeExecutor:
                 "tp_hit_time": tp_hit_time,
             })
 
-        if settings.bot_mode == "live":
-            try:
-                await self.exchange.create_order(
-                    symbol, "market",
-                    "sell" if direction == "long" else "buy",
-                    quantity,
-                )
-            except Exception as e:
-                logger.error(f"Failed to close live position for {symbol}: {e}")
-
         logger.info(f"Trade closed: {direction.upper()} {symbol} PnL: ${pnl:.2f} ({pnl_percent:.2f}%)")
         return trade_result
 
     async def close_all_positions(self, reason: str = "emergency"):
         results = []
         symbols = list(self.active_positions.keys())
+        exit_prices = {}
         for symbol in symbols:
-            result = await self.close_trade(symbol, 0, reason)
+            try:
+                ticker = await self.exchange.fetch_ticker(symbol)
+                if ticker:
+                    price = ticker.get("last", 0)
+                    if price != 0:
+                        exit_prices[symbol] = price
+            except Exception:
+                pass
+        for symbol in symbols:
+            exit_price = exit_prices.get(symbol)
+            if exit_price is None or exit_price == 0:
+                position = self.active_positions.get(symbol)
+                if position:
+                    logger.warning(f"Using entry_price as fallback exit for {symbol}")
+                    exit_price = position["entry_price"]
+            result = await self.close_trade(symbol, exit_price, reason)
             if result:
                 results.append(result)
         return results

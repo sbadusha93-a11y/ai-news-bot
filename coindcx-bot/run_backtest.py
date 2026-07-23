@@ -1,130 +1,57 @@
+#!/usr/bin/env python3
 import asyncio
 import sys
-from datetime import datetime, timedelta
+sys.path.insert(0, ".")
 
-from loguru import logger
-
-from src.backtest.engine import BacktestEngine
 from src.config import bot_config
-from src.data.fetcher import DataFetcher
 from src.exchange.coindcx import CoinDCXExchange
+from src.backtest.engine import BacktestEngine
+import pandas as pd
 
 
-logger.remove()
-logger.add(lambda _: None, level="ERROR")
-
-
-async def main():
-    exchange = CoinDCXExchange()
-    fetcher = DataFetcher(exchange)
-
-    tf = bot_config["timeframes"]["primary"]
-    lookback_days = 60
-
-    print("=" * 80)
-    print(f"BACKTEST: {tf} timeframe | Config: 1h-adjusted")
-    print(f"  Confirmations: {bot_config['timeframes']['confirmation']}")
-    print(f"  Min RR: {bot_config['bot']['min_rr']} | Min Conf: {bot_config['bot']['min_confidence']}")
-    print(f"  SL: {bot_config['risk']['stop_loss_atr_multiplier']}x ATR")
-    print(f"  TP: {[l['ratio'] for l in bot_config['risk']['take_profit_levels']]}x risk")
-    print(f"  Daily risk: {bot_config['risk']['max_daily_risk']}% | Per trade: {bot_config['risk']['max_risk_per_trade']}%")
-    print(f"  Data: {lookback_days} days of {tf} candles")
-    print("=" * 80)
-
-    print("\nFetching top markets...")
-    markets = await fetcher.scan_all_markets()
-    if markets.empty:
-        print("No markets found. Check API connectivity.")
-        await exchange.close()
-        return
-
-    print(f"Found {len(markets)} tradeable pairs\n")
-
-    all_results = {}
-    total_trades = 0
-    total_profit = 0.0
-    total_wins = 0
-    total_losses = 0
-
-    symbols = markets["symbol"].tolist()[:10]
-    from_date = datetime.now() - timedelta(days=lookback_days)
-
-    for symbol in symbols:
-        print(f"{'='*80}")
-        print(f"TESTING: {symbol}")
-        print(f"{'='*80}")
-
-        df = await fetcher.fetch_historical_data(symbol, tf, limit=5000, from_date=from_date)
-        if df.empty or len(df) < 100:
-            print(f"  SKIP: insufficient data")
+async def run_bt():
+    ex = CoinDCXExchange()
+    engine = BacktestEngine(initial_balance=10000.0)
+    symbols = ["BTC_USDT", "ETH_USDT", "SOL_USDT", "BNB_USDT", "XRP_USDT"]
+    results = {}
+    for sym in symbols:
+        print(f"Fetching {sym} 4h data...")
+        ohlcv = await ex.fetch_ohlcv(sym, "4h", 2000)
+        if not ohlcv or len(ohlcv) < 100:
+            print(f"  Not enough data: {len(ohlcv) if ohlcv else 0}")
             continue
-
-        n_candles = len(df)
-        start = df.index[0].strftime("%Y-%m-%d")
-        end = df.index[-1].strftime("%Y-%m-%d")
-        days = (df.index[-1] - df.index[0]).days
-        print(f"  Candles: {n_candles} ({start} to {end} = ~{days}d)")
-        print(f"  Price: ${df['low'].min():.4f} - ${df['high'].max():.4f}")
-
-        engine = BacktestEngine(initial_balance=10000.0)
-        result = await engine.run(df, symbol=symbol)
-
-        if "error" in result:
-            print(f"  ERROR: {result['error']}")
-            continue
-
-        total_trades += result["total_trades"]
-        total_profit += result["net_profit"]
-        total_wins += result["winning_trades"]
-        total_losses += result["losing_trades"]
-
-        all_results[symbol] = result
-
-        pnl_str = f"${result['net_profit']:+.2f}" if result["total_trades"] > 0 else "N/A"
-        print(f"  Trades: {result['total_trades']} | Win: {result['win_rate']}% | PnL: {pnl_str}")
-        if result["total_trades"] > 0:
-            print(f"  Return: {result['total_return']:+.2f}% | MaxDD: {result['max_drawdown']}%")
-            print(f"  PF: {result['profit_factor']} | Sharpe: {result['sharpe_ratio']} | Expectancy: ${result['expectancy']:.4f}")
-
-    print()
-    print("=" * 80)
-    print("SUMMARY")
-    print("=" * 80)
-    tested = len(all_results)
-    print(f"Symbols: {tested}/{len(symbols)}")
-    print(f"Total trades: {total_trades}")
-
-    if total_trades > 0:
-        overall_win_rate = total_wins / total_trades * 100
-        print(f"Total PnL: ${total_profit:+.2f}")
-        print(f"Win rate: {overall_win_rate:.1f}% ({total_wins}W / {total_losses}L)")
-        print(f"Avg profit/symbol: ${total_profit / tested:.2f}" if tested > 0 else "")
-
-        print()
-        print(f"{'Symbol':<12} {'Trades':<7} {'Win%':<7} {'PnL':<11} {'Return':<9} {'MaxDD':<8} {'PF':<7} {'Sharpe':<8}")
-        print("-" * 69)
-        sorted_syms = sorted(all_results.items(), key=lambda x: x[1]["net_profit"], reverse=True)
-        for sym, r in sorted_syms:
-            if r["total_trades"] > 0:
-                print(f"{sym:<12} {r['total_trades']:<7} {r['win_rate']:<6.1f}% "
-                      f"${r['net_profit']:<+8.2f} {r['total_return']:<+7.2f}% "
-                      f"{r['max_drawdown']:<6.2f}% {r['profit_factor']:<6.2f} {r['sharpe_ratio']:<7.4f}")
-            else:
-                print(f"{sym:<12} {0:<7} {'N/A':<7} {'N/A':<11}")
-
-        profitable = sum(1 for r in all_results.values() if r["net_profit"] > 0)
-        print("-" * 69)
-        print(f"Profitable symbols: {profitable}/{tested}")
-
-        if total_profit > 0:
-            print(f"\nResult: PROFITABLE (${total_profit:+.2f}) over {lookback_days}-day period")
-        else:
-            print(f"\nResult: NOT PROFITABLE (${total_profit:+.2f}) over {lookback_days}-day period")
-    else:
-        print("No trades generated at all.")
-
-    await exchange.close()
+        df = pd.DataFrame(ohlcv, columns=["timestamp","open","high","low","close","volume"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+        df.set_index("timestamp", inplace=True)
+        df.sort_index(inplace=True)
+        print(f"  {len(df)} candles: {df.index[0].date()} to {df.index[-1].date()}")
+        result = await engine.run(df, symbol=sym, slippage=0.001, commission=0.00075)
+        results[sym] = result
+        print(f"  Result: {result.get('total_trades',0)} trades")
+        print(f"  PnL: ${result.get('net_profit',0):.2f} ({result.get('total_return',0):.1f}%)")
+        print(f"  Sharpe: {result.get('sharpe_ratio',0):.2f} | Win: {result.get('win_rate',0):.1f}%")
+    await ex.close()
+    return results
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+r = asyncio.run(run_bt())
+print()
+print("=" * 70)
+print("BACKTEST SUMMARY")
+print("=" * 70)
+for sym, res in r.items():
+    print(f"\n{sym}:")
+    print(f"  Trades: {res.get('total_trades',0)}")
+    print(f"  Win Rate: {res.get('win_rate',0):.1f}%")
+    print(f"  Profit Factor: {res.get('profit_factor',0):.2f}")
+    print(f"  Net Profit: ${res.get('net_profit',0):.2f}")
+    print(f"  Total Return: {res.get('total_return',0):.1f}%")
+    print(f"  Max DD: {res.get('max_drawdown',0):.1f}%")
+    print(f"  Sharpe: {res.get('sharpe_ratio',0):.2f}")
+    print(f"  Sortino: {res.get('sortino_ratio',0):.2f}")
+    print(f"  Avg Trade: ${res.get('average_trade',0):.2f}")
+    print(f"  Avg Win: ${res.get('average_win',0):.2f}")
+    print(f"  Avg Loss: ${res.get('average_loss',0):.2f}")
+    print(f"  Expectancy: ${res.get('expectancy',0):.4f}")
+    print(f"  Recovery Factor: {res.get('recovery_factor',0):.2f}")
+    print(f"  Final Balance: ${res.get('final_balance',0):.2f}")

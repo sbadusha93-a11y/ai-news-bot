@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 from loguru import logger
 
-from src.config import bot_config
+from src.config import bot_config, settings
 
 
 class RiskManager:
@@ -15,7 +15,8 @@ class RiskManager:
         self.monthly_pnl = 0.0
         self.consecutive_losses = 0
         self.total_pnl = 0.0
-        self.peak_balance = 10000.0
+        self.initial_balance = settings.initial_balance
+        self.peak_balance = self.initial_balance
         self.max_drawdown = 0.0
         self.daily_trades = []
         self.weekly_trades = []
@@ -38,12 +39,21 @@ class RiskManager:
                 self.pause_trading()
             return False
 
-        if abs(self.daily_pnl) >= self.config["max_daily_risk"]:
-            logger.warning(f"Daily risk limit reached: {self.daily_pnl}")
+        bal = self.initial_balance if self.initial_balance > 0 else 1
+
+        daily_loss = abs(min(self.daily_pnl, 0))
+        daily_loss_pct = daily_loss / bal * 100
+        if daily_loss_pct >= self.config["max_daily_risk"]:
+            logger.warning(f"Daily loss limit reached: ${daily_loss:.2f} loss ({daily_loss_pct:.1f}%)")
+            self.trade_history.append({
+                "symbol": "RISK_LIMIT", "reason_exit": f"daily_loss_limit_{daily_loss_pct:.1f}%"
+            })
             return False
 
-        if abs(self.weekly_pnl) >= self.config["max_weekly_risk"]:
-            logger.warning(f"Weekly risk limit reached: {self.weekly_pnl}")
+        weekly_loss = abs(min(self.weekly_pnl, 0))
+        weekly_loss_pct = weekly_loss / bal * 100
+        if weekly_loss_pct >= self.config["max_weekly_risk"]:
+            logger.warning(f"Weekly loss limit reached: ${weekly_loss:.2f} loss ({weekly_loss_pct:.1f}%)")
             return False
 
         if self.max_drawdown >= self.config["max_drawdown"]:
@@ -81,7 +91,7 @@ class RiskManager:
         else:
             self.consecutive_losses = 0
 
-        current_balance = 10000 + self.total_pnl
+        current_balance = self.initial_balance + self.total_pnl
         if current_balance > self.peak_balance:
             self.peak_balance = current_balance
         dd = (self.peak_balance - current_balance) / self.peak_balance * 100
@@ -110,7 +120,7 @@ class RiskManager:
 
         gross_profit = sum(t["pnl"] for t in self.trade_history if t.get("pnl", 0) > 0)
         gross_loss = abs(sum(t["pnl"] for t in self.trade_history if t.get("pnl", 0) < 0))
-        profit_factor = gross_profit / gross_loss if gross_loss > 0 else float("inf")
+        profit_factor = gross_profit / gross_loss if gross_loss > 0 else (gross_profit if gross_profit > 0 else 0)
 
         returns = [t.get("pnl_percent", 0) for t in self.trade_history]
         sharpe = (

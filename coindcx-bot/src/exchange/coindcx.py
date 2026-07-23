@@ -3,6 +3,8 @@ import hashlib
 import hmac
 import json
 import time
+import traceback
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -10,6 +12,14 @@ import pandas as pd
 from loguru import logger
 
 from src.config import settings
+
+
+FALLBACK_SYMBOLS = [
+    "BTC_USDT", "ETH_USDT", "BNB_USDT", "SOL_USDT", "XRP_USDT",
+    "ADA_USDT", "DOGE_USDT", "DOT_USDT", "LINK_USDT", "AVAX_USDT",
+    "MATIC_USDT", "ATOM_USDT", "UNI_USDT", "LTC_USDT", "BCH_USDT",
+    "XLM_USDT", "TRX_USDT", "FIL_USDT", "APT_USDT", "ARB_USDT",
+]
 
 
 class CoinDCXExchange:
@@ -25,10 +35,14 @@ class CoinDCXExchange:
         self._pair_cache: Dict[str, str] = {}
         self._pair_cache_loaded = False
         self._pair_cache_lock = asyncio.Lock()
+        self._pair_cache_ttl = 3600
+        self._pair_cache_loaded_at = 0
         self._max_retries = 2
         self._active_futures: Dict[str, bool] = {}
         self._active_futures_loaded = False
         self._active_futures_lock = asyncio.Lock()
+        self._ohlcv_cache: Dict[str, tuple] = {}
+        self._ohlcv_cache_ttl = 120
 
     async def _get_http(self) -> httpx.AsyncClient:
         if self._http_client is None:
@@ -62,20 +76,22 @@ class CoinDCXExchange:
         }
 
     async def _ensure_pair_cache(self):
-        if self._pair_cache_loaded:
+        now = time.time()
+        if self._pair_cache_loaded and (now - self._pair_cache_loaded_at) < self._pair_cache_ttl:
             return
         async with self._pair_cache_lock:
-            if self._pair_cache_loaded:
+            if self._pair_cache_loaded and (now - self._pair_cache_loaded_at) < self._pair_cache_ttl:
                 return
             try:
                 http = await self._get_http()
                 resp = await asyncio.wait_for(
-                    http.get(f"{self.base_url}/exchange/v1/markets_details"), timeout=10
+                    http.get(f"{self.base_url}/exchange/v1/markets_details"), timeout=15
                 )
                 if resp.status_code == 200:
                     for m in resp.json():
                         self._pair_cache[m["coindcx_name"]] = m["pair"]
                     self._pair_cache_loaded = True
+                    self._pair_cache_loaded_at = time.time()
                     logger.debug(f"Loaded {len(self._pair_cache)} pair mappings")
             except Exception as e:
                 logger.warning(f"Failed to load pair cache: {e}")
@@ -102,10 +118,21 @@ class CoinDCXExchange:
                 logger.warning(f"No pair mapping found for {symbol}, using raw")
         return result
 
+    def _ohlcv_cache_key(self, symbol: str, timeframe: str, limit: int) -> str:
+        return f"{symbol}:{timeframe}:{limit}"
+
     async def fetch_ohlcv(
         self, symbol: str, timeframe: str = "4h", limit: int = 200,
         start_time: Optional[int] = None, end_time: Optional[int] = None,
     ) -> List[List[float]]:
+        if start_time is None and end_time is None:
+            cache_key = self._ohlcv_cache_key(symbol, timeframe, limit)
+            cached = self._ohlcv_cache.get(cache_key)
+            if cached:
+                cached_data, cached_at = cached
+                if time.time() - cached_at < self._ohlcv_cache_ttl:
+                    return cached_data
+
         await self._ensure_pair_cache()
         last_error = None
         max_attempts = 3
@@ -140,7 +167,7 @@ class CoinDCXExchange:
 
                     resp = await http.get(
                         f"https://public.coindcx.com/market_data/candles",
-                        params=params, timeout=httpx.Timeout(15.0, connect=10.0),
+                        params=params, timeout=httpx.Timeout(20.0, connect=15.0),
                     )
                     if resp.status_code == 200:
                         data = resp.json()
@@ -169,6 +196,8 @@ class CoinDCXExchange:
                                 row["open"], row["high"], row["low"],
                                 row["close"], row["volume"],
                             ])
+                        if start_time is None and end_time is None:
+                            self._ohlcv_cache[cache_key] = (ohlcv, time.time())
                         return ohlcv
                     if resp.status_code != 200:
                         logger.warning(f"OHLCV fetch for {symbol} returned HTTP {resp.status_code}")
@@ -176,47 +205,56 @@ class CoinDCXExchange:
                 except httpx.ConnectError as e:
                     last_error = e
                     if attempt < max_attempts - 1:
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(2 ** attempt)
                     else:
                         logger.warning(f"Failed to fetch OHLCV for {symbol}: {e}")
                         return []
                 except Exception as e:
                     last_error = e
                     if attempt < max_attempts - 1:
-                        await asyncio.sleep(2)
+                        await asyncio.sleep(2 ** attempt)
                     else:
                         logger.warning(f"Failed to fetch OHLCV for {symbol}: {e}")
                         return []
 
     async def fetch_ticker(self, symbol: str) -> Optional[Dict]:
-        async with self._rate_limiter:
-            await self._rate_limit()
-            try:
-                http = await self._get_http()
-                pair = self._get_coin_dcx_pair(symbol)
-                resp = await http.get(
-                    f"{self.base_url}/exchange/v1/derivatives/futures/ticker",
-                    params={"pair": pair},
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    return {
-                        "symbol": symbol,
-                        "last": float(data.get("last_price", 0)),
-                        "bid": float(data.get("bid", 0)),
-                        "ask": float(data.get("ask", 0)),
-                        "high": float(data.get("high", 0)),
-                        "low": float(data.get("low", 0)),
-                        "volume": float(data.get("volume", 0)),
-                        "change": float(data.get("change", 0)),
-                    }
-                return None
-            except Exception as e:
-                logger.debug(f"Failed to fetch ticker for {symbol}: {e}")
-                return None
+        for attempt in range(2):
+            async with self._rate_limiter:
+                await self._rate_limit()
+                try:
+                    http = await self._get_http()
+                    pair = self._get_coin_dcx_pair(symbol)
+                    resp = await http.get(
+                        f"{self.base_url}/exchange/v1/derivatives/futures/ticker",
+                        params={"pair": pair},
+                        timeout=httpx.Timeout(15.0, connect=10.0),
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        return {
+                            "symbol": symbol,
+                            "last": float(data.get("last_price", 0)),
+                            "bid": float(data.get("bid", 0)),
+                            "ask": float(data.get("ask", 0)),
+                            "high": float(data.get("high", 0)),
+                            "low": float(data.get("low", 0)),
+                            "volume": float(data.get("volume", 0)),
+                            "change": float(data.get("change", 0)),
+                        }
+                    return None
+                except (httpx.ConnectError, httpx.TimeoutException) as e:
+                    if attempt == 0:
+                        await asyncio.sleep(1)
+                        continue
+                    logger.debug(f"Failed to fetch ticker for {symbol}: {e}")
+                    return None
+                except Exception as e:
+                    logger.debug(f"Failed to fetch ticker for {symbol}: {e}")
+                    return None
 
     async def fetch_all_tickers(self, quote_currency: str = "USDT") -> Dict[str, Dict]:
         max_retries = 3
+        last_error = None
         for attempt in range(max_retries):
             try:
                 async with self._rate_limiter:
@@ -258,16 +296,44 @@ class CoinDCXExchange:
                         if attempt < max_retries - 1:
                             await asyncio.sleep(2 ** attempt)
                             continue
+                    else:
+                        logger.warning(f"fetch_all_tickers attempt {attempt+1}/{max_retries}: unexpected HTTP {resp.status_code}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)
+                            continue
                     return {}
             except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as e:
-                logger.warning(f"fetch_all_tickers attempt {attempt+1}/{max_retries}: {e}")
+                last_error = f"{type(e).__name__}: {e}"
+                logger.warning(f"fetch_all_tickers attempt {attempt+1}/{max_retries}: {last_error}")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                     continue
-                return {}
+                break
             except Exception as e:
-                logger.error(f"Failed to fetch all tickers: {e}")
-                return {}
+                last_error = f"{type(e).__name__}: {e}"
+                logger.error(f"Failed to fetch all tickers: {last_error}")
+                break
+
+        logger.warning(f"Fetching individual tickers for {len(FALLBACK_SYMBOLS)} fallback symbols")
+        return await self._fetch_fallback_tickers(quote_currency)
+
+    async def _fetch_fallback_tickers(self, quote_currency: str = "USDT") -> Dict[str, Dict]:
+        tickers = {}
+        sem = asyncio.Semaphore(5)
+        async def _fetch(symbol):
+            async with sem:
+                ticker = await self.fetch_ticker(symbol)
+                if ticker:
+                    return symbol, ticker
+                return None
+        results = await asyncio.gather(*[_fetch(s) for s in FALLBACK_SYMBOLS])
+        for r in results:
+            if r:
+                sym, t = r
+                tickers[sym] = t
+        if tickers:
+            logger.info(f"Fetched {len(tickers)} tickers via fallback individual requests")
+        return tickers
 
     async def fetch_balance(self) -> Dict:
         if not self.api_key or not self.api_secret:
@@ -290,9 +356,12 @@ class CoinDCXExchange:
                 return {}
 
     async def create_order(self, symbol: str, order_type: str, side: str,
-                           amount: float, price: Optional[float] = None) -> Optional[Dict]:
+                           amount: float, price: Optional[float] = None,
+                           leverage: Optional[int] = None) -> Optional[Dict]:
         if not self.api_key or not self.api_secret:
             return {"message": "API keys not configured"}
+        if leverage and settings.bot_mode == "live":
+            await self.set_leverage(symbol, leverage)
         async with self._rate_limiter:
             await self._rate_limit()
             try:
@@ -412,6 +481,93 @@ class CoinDCXExchange:
             return True
         pair = self._get_coin_dcx_pair(symbol)
         return self._active_futures.get(pair, True)
+
+    async def fetch_order(self, order_id: str, symbol: str) -> Optional[Dict]:
+        if not self.api_key or not self.api_secret:
+            return None
+        async with self._rate_limiter:
+            await self._rate_limit()
+            try:
+                open_orders = await self.fetch_open_orders(symbol)
+                for o in open_orders:
+                    if o.get("id") == order_id:
+                        return o
+                try:
+                    http = await self._get_http()
+                    payload = {"id": order_id, "timestamp": int(time.time() * 1000)}
+                    headers = self._sign_request(payload)
+                    resp = await http.post(
+                        f"{self.base_url}/exchange/v1/orders/status",
+                        headers=headers, data=json.dumps(payload),
+                    )
+                    if resp.status_code == 200:
+                        return resp.json()
+                except Exception:
+                    pass
+                return None
+            except Exception as e:
+                logger.error(f"Failed to fetch order {order_id}: {e}")
+                return None
+
+    async def set_leverage(self, symbol: str, leverage: int) -> bool:
+        if not self.api_key or not self.api_secret or settings.bot_mode != "live":
+            return True
+        async with self._rate_limiter:
+            await self._rate_limit()
+            try:
+                http = await self._get_http()
+                await self._ensure_pair_cache()
+                pair = self._get_coin_dcx_pair(symbol)
+                payload = {
+                    "market": pair,
+                    "leverage": leverage,
+                    "timestamp": int(time.time() * 1000),
+                    "side": "both",
+                }
+                headers = self._sign_request(payload)
+                resp = await http.post(
+                    f"{self.base_url}/exchange/v1/derivatives/futures/orders/set_leverage",
+                    headers=headers, data=json.dumps(payload),
+                )
+                if resp.status_code == 200:
+                    logger.info(f"Leverage set to {leverage}x for {symbol}")
+                    return True
+                logger.warning(f"Failed to set leverage for {symbol}: {resp.status_code} {resp.text}")
+                return False
+            except Exception as e:
+                logger.error(f"Failed to set leverage: {e}")
+                return False
+
+    async def fetch_positions(self) -> List[Dict]:
+        if not self.api_key or not self.api_secret:
+            return []
+        async with self._rate_limiter:
+            await self._rate_limit()
+            try:
+                http = await self._get_http()
+                payload = {"timestamp": int(time.time() * 1000)}
+                headers = self._sign_request(payload)
+                resp = await http.post(
+                    f"{self.base_url}/exchange/v1/derivatives/futures/positions",
+                    headers=headers, data=json.dumps(payload),
+                )
+                if resp.status_code == 200:
+                    return resp.json()
+                return []
+            except Exception as e:
+                logger.error(f"Failed to fetch positions: {e}")
+                return []
+
+    async def check_exchange_status(self) -> bool:
+        try:
+            http = await self._get_http()
+            resp = await asyncio.wait_for(
+                http.get(f"{self.base_url}/exchange/v1/markets", timeout=5),
+                timeout=5,
+            )
+            return resp.status_code == 200
+        except Exception:
+            return False
 
     async def close(self):
         if self._http_client:

@@ -19,8 +19,10 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_pass: str = ""
     alert_email: str = ""
-    dashboard_username: str = "admin"
-    dashboard_password: str = "admin"
+    dashboard_username: str = ""
+    dashboard_password: str = ""
+    dashboard_password_hash: str = ""
+    bot_api_key: str = ""
     newsapi_key: str = ""
     twitter_bearer_token: str = ""
     ml_training_enabled: bool = True
@@ -29,6 +31,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_positions: int = 3
     max_risk_per_trade: float = 1.0
+    initial_balance: float = 10000.0
     railway_lite_mode: bool = False
     railway_volume_path: str = "/data"
 
@@ -62,6 +65,24 @@ def load_weights() -> dict:
 
 bot_config = load_config()
 indicator_weights = load_weights()
+
+
+def validate_config():
+    warnings_list = []
+    if not settings.coin_dcx_api_key or settings.coin_dcx_api_key == "YOUR_API_KEY_HERE":
+        warnings_list.append("CoinDCX API key not set — trading will fail in live mode")
+    if not settings.coin_dcx_api_secret or settings.coin_dcx_api_secret == "YOUR_API_SECRET_HERE":
+        warnings_list.append("CoinDCX API secret not set — trading will fail in live mode")
+    if settings.bot_mode == "live" and (
+        not settings.coin_dcx_api_key or settings.coin_dcx_api_key == "YOUR_API_KEY_HERE"
+    ):
+        warnings_list.append("CRITICAL: Bot is in LIVE mode but API keys are placeholder values!")
+    if not settings.telegram_bot_token or not settings.telegram_chat_id:
+        warnings_list.append("Telegram alerts not configured")
+    if settings.dashboard_username == "" or settings.dashboard_password == "":
+        warnings_list.append("Dashboard credentials not set — using defaults")
+    return warnings_list
+
 
 def reload_config():
     global bot_config, indicator_weights

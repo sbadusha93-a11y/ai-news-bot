@@ -1,34 +1,64 @@
 import asyncio
+import json
 import math
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
+from starlette.status import HTTP_401_UNAUTHORIZED
 
 from src.config import settings
 
 
+class SafeJSONResponse(JSONResponse):
+    def render(self, content: Any) -> bytes:
+        cleaned = safe_json(content)
+        return json.dumps(
+            cleaned,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+
+API_KEY = os.getenv("BOT_API_KEY", "")
+security = HTTPBearer(auto_error=False)
+
+
+async def verify_api_key(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    if not API_KEY:
+        return True
+    if credentials is None or credentials.credentials != API_KEY:
+        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+    return True
+
+
 def safe_json(obj):
-    """Recursively convert non-serializable values (inf, nan) to null/0."""
-    if isinstance(obj, float):
-        if math.isnan(obj) or math.isinf(obj):
-            return 0
-        return obj
     if isinstance(obj, dict):
         return {k: safe_json(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [safe_json(v) for v in obj]
-    if isinstance(obj, tuple):
-        return tuple(safe_json(v) for v in obj)
+    if isinstance(obj, (list, tuple)):
+        return type(obj)(safe_json(v) for v in obj)
+    try:
+        if hasattr(obj, '__float__'):
+            f = float(obj)
+            if math.isnan(f) or math.isinf(f):
+                return 0
+            return f
+    except (TypeError, ValueError):
+        pass
     return obj
+
 
 app = FastAPI(
     title="CoinDCX Pro Bot API",
     description="REST API for CoinDCX Pro Trading Bot",
     version="2.0.0",
+    default_response_class=SafeJSONResponse,
 )
 
 app.add_middleware(
@@ -66,7 +96,7 @@ async def root():
     }
 
 
-@app.get("/api/v1/status")
+@app.get("/api/v1/status", dependencies=[Depends(verify_api_key)])
 async def get_status():
     global bot_instance
     if not bot_instance:
@@ -84,7 +114,7 @@ async def get_status():
     }
 
 
-@app.get("/api/v1/positions")
+@app.get("/api/v1/positions", dependencies=[Depends(verify_api_key)])
 async def get_positions():
     global bot_instance
     if not bot_instance:
@@ -92,16 +122,17 @@ async def get_positions():
     return {"positions": bot_instance.trade_executor.get_active_positions()}
 
 
-@app.get("/api/v1/portfolio")
+@app.get("/api/v1/portfolio", dependencies=[Depends(verify_api_key)])
 async def get_portfolio():
     global bot_instance
     if not bot_instance:
         return {"balance": 0, "total_pnl": 0, "open_positions": 0}
 
     metrics = bot_instance.risk_manager.get_metrics()
+    init_bal = bot_instance.risk_manager.initial_balance
     return {
-        "balance": 10000 + metrics["total_pnl"],
-        "initial_balance": 10000,
+        "balance": init_bal + metrics["total_pnl"],
+        "initial_balance": init_bal,
         "total_pnl": metrics["total_pnl"],
         "daily_pnl": metrics["daily_pnl"],
         "weekly_pnl": metrics["weekly_pnl"],
@@ -110,7 +141,7 @@ async def get_portfolio():
     }
 
 
-@app.post("/api/v1/trade")
+@app.post("/api/v1/trade", dependencies=[Depends(verify_api_key)])
 async def execute_trade(request: TradeRequest):
     global bot_instance
     if not bot_instance:
@@ -129,7 +160,7 @@ async def execute_trade(request: TradeRequest):
     return {"success": True, "trade": result}
 
 
-@app.post("/api/v1/close/{symbol}")
+@app.post("/api/v1/close/{symbol}", dependencies=[Depends(verify_api_key)])
 async def close_position(symbol: str):
     global bot_instance
     if not bot_instance:
@@ -143,7 +174,7 @@ async def close_position(symbol: str):
     return {"success": True, "trade": result}
 
 
-@app.post("/api/v1/close_all")
+@app.post("/api/v1/close_all", dependencies=[Depends(verify_api_key)])
 async def close_all_positions():
     global bot_instance
     if not bot_instance:
@@ -153,7 +184,7 @@ async def close_all_positions():
     return {"success": True, "closed": len(results), "trades": results}
 
 
-@app.post("/api/v1/control")
+@app.post("/api/v1/control", dependencies=[Depends(verify_api_key)])
 async def control_bot(control: BotControl):
     global bot_instance
     if not bot_instance:
@@ -176,7 +207,7 @@ async def control_bot(control: BotControl):
         raise HTTPException(400, f"Unknown action: {action}")
 
 
-@app.post("/api/v1/clear_history")
+@app.post("/api/v1/clear_history", dependencies=[Depends(verify_api_key)])
 async def clear_history():
     global bot_instance
     if bot_instance and hasattr(bot_instance, "database"):
@@ -206,7 +237,7 @@ async def scan_market():
     return {"opportunities": opportunities}
 
 
-@app.post("/api/v1/trigger_scan")
+@app.post("/api/v1/trigger_scan", dependencies=[Depends(verify_api_key)])
 async def trigger_scan():
     global bot_instance
     if not bot_instance:
@@ -231,25 +262,30 @@ async def get_tickers():
     if not bot_instance:
         return {"tickers": {}}
     try:
-        tickers = await bot_instance.exchange.fetch_all_tickers()
-        keys = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
+        all_tickers = await bot_instance.exchange.fetch_all_tickers()
+        if all_tickers:
+            return {"tickers": all_tickers}
+        keys = ["BTC_USDT", "ETH_USDT", "SOL_USDT", "BNB_USDT", "XRP_USDT"]
         result = {}
         for k in keys:
-            found = next((s for s in tickers if k in s), None)
-            if found:
-                result[k] = tickers[found]
+            ticker = await bot_instance.exchange.fetch_ticker(k)
+            if ticker:
+                result[k] = ticker
         return {"tickers": result}
     except Exception:
         return {"tickers": {}}
 
 
 @app.get("/api/v1/live_prices")
-async def live_prices(symbols: str = Query("BTCUSDT,ETHUSDT")):
+async def live_prices(symbols: str = Query("BTC_USDT,ETH_USDT")):
     global bot_instance
     if not bot_instance:
         return {"prices": {}}
     try:
         sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+        all_tickers = await bot_instance.exchange.fetch_all_tickers()
+        if all_tickers:
+            return {"prices": {s: all_tickers.get(s, {}) for s in sym_list}}
         result = {}
         for sym in sym_list:
             ticker = await bot_instance.exchange.fetch_ticker(sym)

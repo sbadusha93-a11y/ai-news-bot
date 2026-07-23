@@ -1,23 +1,22 @@
 {
   "bot": {
     "name": "CoinDCX Pro Bot",
-    "version": "2.0.0",
+    "version": "3.0.0",
     "mode": "paper",
     "auto_trade": true,
     "max_positions": 5,
     "max_positions_per_coin": 1,
-    "min_confidence": 85,
+    "min_confidence": 70,
     "min_rr": 1.5,
     "max_risk_score": 50,
     "leverage": 5,
     "trade_direction": "both"
   },
   "timeframes": {
-    "primary": "1h",
+    "primary": "4h",
     "confirmation": [
-      "4h",
-      "15m",
-      "5m"
+      "1h",
+      "15m"
     ],
     "scan_interval": 300
   },
@@ -47,29 +46,34 @@
     "max_weekly_risk": 10.0,
     "max_drawdown": 15.0,
     "max_consecutive_losses": 3,
-    "stop_loss_atr_multiplier": 1.5,
-    "trailing_stop_activation": 1.0,
-    "trailing_stop_distance": 0.4,
-    "break_even_trigger": 1.2,
+    "stop_loss_atr_multiplier": 1.8,
+    "trailing_stop_activation": 1.5,
+    "trailing_stop_distance": 0.5,
+    "break_even_trigger": 1.5,
     "take_profit_levels": [
-      {
-        "level": 1,
-        "ratio": 2.0,
-        "size": 0.4
-      },
-      {
-        "level": 2,
-        "ratio": 3.5,
-        "size": 0.35
-      },
-      {
-        "level": 3,
-        "ratio": 5.0,
-        "size": 0.25
-      }
+      { "level": 1, "ratio": 2.0, "size": 0.35 },
+      { "level": 2, "ratio": 3.5, "size": 0.35 },
+      { "level": 3, "ratio": 5.5, "size": 0.30 }
     ],
     "auto_pause_after_losses": true,
-    "pause_duration_minutes": 60
+    "pause_duration_minutes": 60,
+    "portfolio": {
+      "correlation_threshold": 0.70,
+      "max_correlated_exposure": 0.40,
+      "max_concentration_single": 0.30,
+      "var_confidence": 0.95
+    },
+    "regime": {
+      "enabled": true,
+      "adapt_parameters": true,
+      "adapt_confidence": true,
+      "extreme_volatility_cooldown_minutes": 30
+    },
+    "kelly": {
+      "enabled": true,
+      "edge_multiplier": 0.25,
+      "max_fraction": 0.02
+    }
   },
   "indicator_settings": {
     "rsi_period": 14,
@@ -77,13 +81,7 @@
     "macd_fast": 12,
     "macd_slow": 26,
     "macd_signal": 9,
-    "ema_periods": [
-      9,
-      20,
-      50,
-      100,
-      200
-    ],
+    "ema_periods": [9, 20, 50, 100, 200],
     "bollinger_period": 20,
     "bollinger_std": 2,
     "atr_period": 14,

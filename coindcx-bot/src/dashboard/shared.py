@@ -11,7 +11,27 @@ from src.data.database import Database
 
 _EXCHANGE: Optional[CoinDCXExchange] = None
 _DB: Optional[Database] = None
-_ASYNC_LOOP: asyncio.AbstractEventLoop = None
+_ASYNC_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _get_or_create_loop() -> asyncio.AbstractEventLoop:
+    global _ASYNC_LOOP
+    if _ASYNC_LOOP is None or _ASYNC_LOOP.is_closed():
+        try:
+            _ASYNC_LOOP = asyncio.get_running_loop()
+        except RuntimeError:
+            _ASYNC_LOOP = asyncio.new_event_loop()
+            asyncio.set_event_loop(_ASYNC_LOOP)
+    return _ASYNC_LOOP
+
+
+def _run_async(coro):
+    loop = _get_or_create_loop()
+    if loop.is_running():
+        fut = asyncio.run_coroutine_threadsafe(coro, loop)
+        return fut.result()
+    else:
+        return loop.run_until_complete(coro)
 
 
 def _get_exchange():
@@ -22,12 +42,12 @@ def _get_exchange():
 
 
 async def _fetch_all_tickers():
-    ex = CoinDCXExchange()
+    ex = _get_exchange()
     return await ex.fetch_all_tickers()
 
 
 async def _fetch_ohlcv(symbol: str, timeframe: str, limit: int):
-    ex = CoinDCXExchange()
+    ex = _get_exchange()
     return await ex.fetch_ohlcv(symbol, timeframe, limit)
 
 
@@ -37,13 +57,6 @@ def _get_db():
         _DB = Database()
         _run_async(_DB.initialize())
     return _DB
-
-
-import nest_asyncio
-nest_asyncio.apply()
-
-def _run_async(coro):
-    return asyncio.run(coro)
 
 
 def _get_fetcher():
@@ -87,7 +100,7 @@ def _calc_metrics(trades):
         sharpe = sortino = 0
 
     eq = []
-    bal = 10000
+    bal = settings.initial_balance
     eq.append(bal)
     for t in trades:
         if t.pnl is not None:

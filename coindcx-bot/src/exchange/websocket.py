@@ -8,22 +8,26 @@ from loguru import logger
 
 
 class CoinDCXWebSocket:
-    MAX_CONSECUTIVE_FAILURES = 5
-    DEEP_SLEEP_INTERVAL = 1800
+    MAX_CONSECUTIVE_FAILURES = 15
+    DEEP_SLEEP_INTERVAL = 300
 
     def __init__(self):
         self.base_urls = [
+            "wss://stream.coindcx.com",
             "wss://stream.coindcx.com",
         ]
         self._ws: Optional[websockets.WebSocketClientProtocol] = None
         self._running = False
         self._callbacks: Dict[str, List[Callable]] = {}
         self._reconnect_delay = 5
-        self._max_reconnect_delay = 300
+        self._max_reconnect_delay = 60
         self._connect_attempts = 0
         self._consecutive_failures = 0
         self._in_deep_sleep = False
         self._current_url_index = 0
+        self._subscribed_channels: List[Dict] = []
+        self._pending_resubscribe = False
+        self._health_check_interval = 60
 
     async def connect(self):
         self._connect_attempts += 1
@@ -45,12 +49,16 @@ class CoinDCXWebSocket:
                     ping_timeout=10,
                     open_timeout=15,
                     close_timeout=10,
+                    user_agent_header="Mozilla/5.0",
                 )
                 self._reconnect_delay = 5
                 self._connect_attempts = 0
                 self._consecutive_failures = 0
                 self._in_deep_sleep = False
                 logger.info(f"WebSocket connected to {base_url}")
+                if self._subscribed_channels:
+                    logger.info(f"Re-subscribing to {len(self._subscribed_channels)} channels")
+                    await self._resubscribe_all()
                 return
             except Exception as e:
                 self._consecutive_failures += 1
@@ -69,7 +77,8 @@ class CoinDCXWebSocket:
     async def _deep_sleep_reconnect(self):
         await asyncio.sleep(self.DEEP_SLEEP_INTERVAL)
         self._in_deep_sleep = False
-        self._consecutive_failures = self.MAX_CONSECUTIVE_FAILURES - 1
+        self._consecutive_failures = 0
+        logger.debug("WebSocket deep sleep ended, attempting reconnection")
         await self.connect()
 
     async def _delayed_reconnect(self):
@@ -80,7 +89,18 @@ class CoinDCXWebSocket:
         await asyncio.sleep(delay)
         await self.connect()
 
+    async def _resubscribe_all(self):
+        if not self._ws or not self._subscribed_channels:
+            return
+        try:
+            payload = {"type": "subscribe", "channels": self._subscribed_channels}
+            await self._ws.send(json.dumps(payload))
+            logger.info(f"Resubscribed to {len(self._subscribed_channels)} channel(s)")
+        except Exception as e:
+            logger.warning(f"Resubscribe failed: {e}")
+
     async def subscribe(self, channels: List[Dict]):
+        self._subscribed_channels.extend(channels)
         if self._ws:
             payload = {"type": "subscribe", "channels": channels}
             await self._ws.send(json.dumps(payload))
@@ -137,7 +157,7 @@ class CoinDCXWebSocket:
                 if not self._ws:
                     await self.connect()
                     if not self._ws:
-                        sleep_for = self.DEEP_SLEEP_INTERVAL if self._in_deep_sleep else 30
+                        sleep_for = min(self.DEEP_SLEEP_INTERVAL, 30) if self._in_deep_sleep else 30
                         await asyncio.sleep(sleep_for)
                         continue
                 async for message in self._ws:
@@ -148,16 +168,26 @@ class CoinDCXWebSocket:
                 logger.debug("WebSocket connection closed")
                 if self._running:
                     self._ws = None
-                    asyncio.create_task(self._delayed_reconnect())
-                    await asyncio.sleep(5)
+                    if not self._in_deep_sleep:
+                        asyncio.create_task(self._delayed_reconnect())
+                    await asyncio.sleep(2)
+            except asyncio.CancelledError:
+                logger.debug("WebSocket task cancelled")
+                break
             except Exception as e:
                 logger.debug(f"WebSocket error: {e}")
+                self._consecutive_failures += 1
                 self._ws = None
-                if self._running:
+                if self._running and not self._in_deep_sleep:
                     asyncio.create_task(self._delayed_reconnect())
-                    await asyncio.sleep(60)
+                    await asyncio.sleep(2)
 
     async def stop(self):
         self._running = False
+        self._in_deep_sleep = False
         if self._ws:
-            await self._ws.close()
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None

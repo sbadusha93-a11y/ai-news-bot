@@ -28,6 +28,17 @@ from src.api.server import safe_json
 from src.dashboard.shared import _get_exchange, _get_db, _fetch_trades, _calc_metrics, _run_async, _get_fetcher, _fetch_all_tickers, _fetch_ohlcv
 
 
+def _render_html(html_content, height=600, scrolling=False):
+    try:
+        from streamlit.components.v1 import html as _components_html
+        _components_html(html_content, height=height, scrolling=scrolling)
+    except Exception:
+        if scrolling and height:
+            st.markdown(f'<div style="height:{height}px;overflow:auto;">{html_content}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(html_content, unsafe_allow_html=True)
+
+
 def run_dashboard():
     st.set_page_config(
         page_title="CoinDCX Pro Trading Bot",
@@ -87,7 +98,7 @@ def _resolve_api_base() -> str:
     if url:
         return url.rstrip("/")
     import socket
-    for host in ["http://localhost:8080", "http://127.0.0.1:8080"]:
+    for host in ["http://localhost:8085", "http://127.0.0.1:8085", "http://localhost:8080", "http://127.0.0.1:8080"]:
         try:
             s = socket.create_connection((host.split("://")[1].split(":")[0], 8080), timeout=1)
             s.close()
@@ -152,7 +163,8 @@ def _live_prices_js(symbols=None, pair_labels=None):
 
 
 def _render_live_prices(btc=None, eth=None, total_markets=0, usdt_pairs=0):
-    st.components.v1.html(_live_prices_js(), height=80)
+    html_content = _live_prices_js()
+    st.markdown(html_content, unsafe_allow_html=True)
     with st.container():
         cols = st.columns(4)
         with cols[2]:
@@ -181,6 +193,71 @@ def _render_login():
                     st.error("Invalid credentials")
 
 
+def _render_regime_card():
+    try:
+        from src.risk.regime import MarketRegimeDetector
+        det = MarketRegimeDetector()
+        ex = _get_exchange()
+        ohlcv = _run_async(ex.fetch_ohlcv("BTC_USDT", "1h", 200))
+        if ohlcv and len(ohlcv) > 100:
+            df = pd.DataFrame(ohlcv, columns=["timestamp","open","high","low","close","volume"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+            df.set_index("timestamp", inplace=True)
+            from src.indicators.technical import TechnicalIndicators
+            ti = TechnicalIndicators()
+            df = ti.compute_all(df)
+            regime = det.detect(df)
+            phase_icons = {"accumulation": "📦", "markup": "📈", "distribution": "📤", "markdown": "📉"}
+            vol_icons = {"low": "🟢", "normal": "🟡", "high": "🟠", "extreme": "🔴"}
+            trend_icons = {"strong_uptrend": "🚀", "weak_uptrend": "📈", "sideways": "➡️",
+                           "weak_downtrend": "📉", "strong_downtrend": "💥"}
+            pi = phase_icons.get(regime.get("phase",""), "")
+            vi = vol_icons.get(regime.get("volatility",""), "")
+            ti = trend_icons.get(regime.get("trend",""), "")
+            is_trade = "✅" if regime.get("is_tradeable", True) else "⛔"
+            st.markdown(f"""
+            <div style="background:#1a1a2e; border-radius:8px; padding:12px; margin-bottom:16px;">
+                <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:14px;">
+                    <span><b>Phase:</b> {pi} {regime.get('phase','?')}</span>
+                    <span><b>Volatility:</b> {vi} {regime.get('volatility','?')}</span>
+                    <span><b>Trend:</b> {ti} {regime.get('trend','?')}</span>
+                    <span><b>Tradeable:</b> {is_trade}</span>
+                    <span><b>ADX:</b> {regime.get('adx',0):.1f}</span>
+                    <span><b>ATR%:</b> {regime.get('atr_percent',0):.2f}%</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    except Exception:
+        pass
+
+
+def _render_portfolio_risk_card():
+    try:
+        from src.risk.portfolio import PortfolioRiskManager
+        pr = PortfolioRiskManager()
+        open_trades = _fetch_trades(status="open")
+        if len(open_trades) >= 2:
+            from src.risk.sizing import PositionSizer
+            positions = {}
+            for t in open_trades:
+                positions[t.symbol] = {
+                    "side": t.side,
+                    "entry_price": t.entry_price or 0,
+                    "quantity": t.quantity or 0,
+                }
+            var_95 = pr.calculate_portfolio_var(positions)
+            st.markdown(f"""
+            <div style="background:#1a1a2e; border-radius:8px; padding:12px; margin-bottom:16px;">
+                <div style="display:flex; gap:20px; flex-wrap:wrap; font-size:14px;">
+                    <span><b>Open Positions:</b> {len(open_trades)}</span>
+                    <span><b>VaR (95%):</b> <span style="color:#ff6666">${var_95:,.2f}</span></span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    except Exception:
+        pass
+
+
 def _render_dashboard():
     st.title("📊 Trading Dashboard")
 
@@ -188,6 +265,9 @@ def _render_dashboard():
 
     _render_live_prices(tickers.get("BTCUSDT", {}), tickers.get("ETHUSDT", {}),
                         len(tickers), sum(1 for s in tickers if s.endswith("USDT")))
+
+    _render_regime_card()
+    _render_portfolio_risk_card()
 
     st.subheader("📈 Top 10 Markets by Volume")
     df_tickers = pd.DataFrame([
@@ -198,7 +278,7 @@ def _render_dashboard():
     df_tickers["Price"] = df_tickers["Price"].apply(lambda x: f"${x:,.4f}")
     df_tickers["Volume"] = df_tickers["Volume"].apply(lambda x: f"{x:,.2f}")
     df_tickers["Change"] = df_tickers["Change"].apply(lambda x: f"{x:+.2f}%")
-    st.dataframe(df_tickers, use_container_width=True, hide_index=True)
+    st.dataframe(df_tickers, hide_index=True)
 
     trades = _fetch_trades(limit=200)
     metrics = _calc_metrics(trades)
@@ -209,6 +289,12 @@ def _render_dashboard():
     col3.metric("Total P&L", f"${metrics.get('total_pnl', 0):,.2f}")
     col4.metric("Open Positions", len(_fetch_trades(status="open")))
 
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Sharpe", f"{metrics.get('sharpe_ratio', 0):.2f}")
+    col2.metric("Sortino", f"{metrics.get('sortino_ratio', 0):.2f}")
+    col3.metric("Profit Factor", f"{metrics.get('profit_factor', 0):.2f}")
+    col4.metric("Expectancy", f"${metrics.get('expectancy', 0):,.2f}")
+
     with st.expander("📈 Equity Curve", expanded=True):
         fig = go.Figure()
         eq = metrics.get("equity_curve", [10000])
@@ -217,7 +303,7 @@ def _render_dashboard():
             fill="tozeroy", fillcolor="rgba(0,255,136,0.1)",
         ))
         fig.update_layout(template="plotly_dark", height=350, margin=dict(l=0, r=0, t=10, b=0))
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width)
 
 
 def _get_tf_hours():
@@ -332,6 +418,12 @@ async def _scan_markets(ex, max_coins, symbols=None):
             next_candle = candle_time + pd.Timedelta(hours=tf_hours)
             expiry_ts = int(next_candle.timestamp())
 
+            from src.risk.regime import MarketRegimeDetector
+            regime_det = MarketRegimeDetector()
+            regime = regime_det.detect(df)
+            phase_icon = {"accumulation":"📦","markup":"📈","distribution":"📤","markdown":"📉"}.get(regime.get("phase",""),"")
+            vol_icon = {"low":"🟢","normal":"🟡","high":"🟠","extreme":"🔴"}.get(regime.get("volatility",""),"")
+
             results.append({
                 "symbol": symbol,
                 "signal": signal,
@@ -348,6 +440,11 @@ async def _scan_markets(ex, max_coins, symbols=None):
                 "adx": adx,
                 "bos": bos,
                 "choch": choch,
+                "market_phase": regime.get("phase","?"),
+                "volatility": regime.get("volatility","?"),
+                "phase_icon": phase_icon,
+                "vol_icon": vol_icon,
+                "tradeable": regime.get("is_tradeable", True),
                 "expiry_ts": expiry_ts,
                 "scanned_at": int(now_ts.timestamp()),
             })
@@ -401,6 +498,9 @@ def _format_signal_row(s, live_price=None, is_stale=False):
     def price_str(p):
         return f"${p:,.4f}" if p else "—"
 
+    phase_info = f"{s.get('phase_icon','')} {s.get('market_phase','?')}"
+    vol_info = f"{s.get('vol_icon','')} {s.get('volatility','?')}"
+
     return f"""<tr{stale_attr} data-symbol="{sym_raw}" data-entry="{entry_price}">
         <td><b>{coin}</b></td>
         <td style="color:{'#00ff88' if sig=='LONG' else '#ff4444' if sig=='SHORT' else '#888'}">{sig_icon} {sig}</td>
@@ -416,8 +516,8 @@ def _format_signal_row(s, live_price=None, is_stale=False):
         <td>{s['rsi']:.1f}</td>
         <td>{macd_icon}</td>
         <td>{s['adx']:.1f}</td>
-        <td>{bos_icon}</td>
-        <td>{choch_icon}</td>
+        <td>{phase_info}</td>
+        <td>{vol_info}</td>
         <td><span class="countdown" data-expiry="{s['expiry_ts']}">--</span></td>
     </tr>"""
 
@@ -455,7 +555,7 @@ def _render_signal_table(signals, tickers=None, now_ts=None):
     <table class="signal-table">
         <thead><tr>
             <th>Coin</th><th>Signal</th><th>Conf</th><th>Entry</th><th>Current</th><th>Chg%</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th>
-            <th>Trend</th><th>RSI</th><th>MACD</th><th>ADX</th><th>BOS</th><th>CHOCH</th><th>Validity</th>
+            <th>Trend</th><th>RSI</th><th>MACD</th><th>ADX</th><th>Phase</th><th>Volatility</th><th>Validity</th>
         </tr></thead>
         <tbody>{rows}</tbody>
     </table>
@@ -522,7 +622,7 @@ def _render_signal_table(signals, tickers=None, now_ts=None):
     }})();
     </script>
     </div>"""
-    st.components.v1.html(html, height=len(signals) * 36 + 120, scrolling=True)
+    _render_html(html, height=len(signals) * 36 + 120, scrolling=True)
 
 
 def _calc_pnl(signal, price_at_expiry):
@@ -647,7 +747,7 @@ def _render_scanner_js(initial_signals):
             var html = '<table style="width:100%;border-collapse:collapse;font-size:13px;color:#fff;">';
             html += '<thead><tr style="background:#1a1a2e;">';
             html += '<th>Coin</th><th>Signal</th><th>Conf</th><th>Entry</th><th>Current</th><th>Chg%</th><th>SL</th><th>TP1</th><th>TP2</th><th>TP3</th>';
-            html += '<th>Trend</th><th>RSI</th><th>MACD</th><th>ADX</th><th>BOS</th><th>CHOCH</th><th>Expiry</th>';
+            html += '<th>Trend</th><th>RSI</th><th>MACD</th><th>ADX</th><th>Phase</th><th>Volatility</th><th>Expiry</th>';
             html += '</tr></thead><tbody>';
             sigs.forEach(function(s) {{
                 if (s.signal === 'LONG') long++; else if (s.signal === 'SHORT') short++; else neut++;
@@ -673,8 +773,8 @@ def _render_scanner_js(initial_signals):
                 html += '<td style="padding:6px 8px;">' + (s.rsi || 0).toFixed(1) + '</td>';
                 html += '<td style="padding:6px 8px;">' + (s.macd_dir || '—') + '</td>';
                 html += '<td style="padding:6px 8px;">' + (s.adx || 0).toFixed(1) + '</td>';
-                html += '<td style="padding:6px 8px;">' + (s.bos || '—') + '</td>';
-                html += '<td style="padding:6px 8px;">' + (s.choch || '—') + '</td>';
+                html += '<td style="padding:6px 8px;">' + (s.market_phase || '—') + '</td>';
+                html += '<td style="padding:6px 8px;">' + (s.volatility || '—') + '</td>';
                 html += '<td class="expiry-cell" style="padding:6px 8px;font-family:monospace;color:#ffcc00;" data-expiry="' + (s.expiry_ts || 0) + '"></td>';
                 html += '</tr>';
             }});
@@ -811,7 +911,7 @@ def _render_scanner_js(initial_signals):
     }})();
     </script>
     """
-    st.components.v1.html(html, height=600, scrolling=True)
+    _render_html(html, height=600, scrolling=True)
 
 
 def _render_backtest():
@@ -888,7 +988,7 @@ def _render_backtest_results(result: dict, df: pd.DataFrame, engine, initial_bal
             title="Equity Curve",
             xaxis_title="Trade #", yaxis_title="Balance ($)",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width)
 
     if engine.trades:
         with st.expander("📋 Trade List", expanded=False):
@@ -897,7 +997,7 @@ def _render_backtest_results(result: dict, df: pd.DataFrame, engine, initial_bal
             trades_df = trades_df[[c for c in cols if c in trades_df.columns]]
             trades_df["pnl"] = trades_df["pnl"].apply(lambda x: f"${x:+.2f}")
             trades_df["pnl_percent"] = trades_df["pnl_percent"].apply(lambda x: f"{x:+.2f}%")
-            st.dataframe(trades_df, use_container_width=True, hide_index=True)
+            st.dataframe(trades_df, hide_index=True)
 
 
 def _render_positions():
@@ -922,17 +1022,32 @@ def _render_positions():
             pnl_pct = ((entry - current) / entry * 100) if entry else 0
         sl = t.stop_loss or 0
         tp = t.take_profit_1 or 0
+        trailing = getattr(t, 'trailing_stop_price', None)
+        be = getattr(t, 'break_even_price', None)
+        trailing_str = f"${trailing:,.4f}" if trailing else "—"
+        be_str = f"${be:,.4f}" if be else "—"
+        liq_price = 0
+        try:
+            from src.risk.portfolio import PortfolioRiskManager
+            pr = PortfolioRiskManager()
+            liq = pr.compute_liquidation_price(entry, t.quantity or 0, t.side, lev)
+            liq_price = liq
+        except Exception:
+            pass
         rows.append({
             "Symbol": sym, "Side": side, "Entry": f"${entry:,.4f}",
             "Current": f"${current:,.4f}",
             "PnL": f"{pnl_pct:+.2f}%",
             "SL": f"${sl:,.4f}" if sl else "—",
-            "TP": f"${tp:,.4f}" if tp else "—",
+            "TP1": f"${tp:,.4f}" if tp else "—",
+            "Trail": trailing_str,
+            "B/E": be_str,
+            "Liq": f"${liq_price:,.4f}" if liq_price else "—",
             "Qty": t.quantity,
             "Opened": t.entry_time.strftime("%m-%d %H:%M:%S") if t.entry_time else "—",
         })
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, hide_index=True)
 
 
 def _render_history():
@@ -971,7 +1086,7 @@ def _render_history():
             "TP Hit": _fmt_tp_info(t),
         })
     df = pd.DataFrame(rows)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, hide_index=True)
 
     closed = [t for t in all_trades if t.status == "closed"]
     if closed:
@@ -1015,7 +1130,7 @@ def _render_performance():
                 fill="tozeroy", fillcolor="rgba(0,255,136,0.1)",
             ))
             fig.update_layout(template="plotly_dark", height=350)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width)
 
 
 def _render_settings():
@@ -1039,6 +1154,22 @@ def _render_settings():
             max_losses = st.number_input("Max Consecutive Losses", 1, 10, bc["risk"]["max_consecutive_losses"])
             leverage = st.number_input("Leverage", 1, 10, bc["bot"]["leverage"])
 
+        st.subheader("Portfolio Risk")
+        col1, col2 = st.columns(2)
+        with col1:
+            corr_thresh = st.number_input("Correlation Threshold", 0.5, 0.95, float(bc["risk"].get("portfolio", {}).get("correlation_threshold", 0.7)), step=0.05)
+            max_conc = st.number_input("Max Single Concentration (%)", 10.0, 100.0, float(bc["risk"].get("portfolio", {}).get("max_concentration_single", 0.25) * 100), step=5.0) / 100.0
+        with col2:
+            kelly_enabled = st.checkbox("Kelly Criterion Sizing", bool(bc["risk"].get("kelly", {}).get("enabled", True)))
+            kelly_edge = st.number_input("Kelly Edge Multiplier", 0.05, 1.0, float(bc["risk"].get("kelly", {}).get("edge_multiplier", 0.25)), step=0.05)
+
+        st.subheader("Market Regime")
+        col1, col2 = st.columns(2)
+        with col1:
+            regime_enabled = st.checkbox("Regime Detection", bc["risk"].get("regime", {}).get("enabled", True))
+        with col2:
+            vol_cooldown = st.number_input("Extreme Vol Cooldown (min)", 5, 120, bc["risk"].get("regime", {}).get("extreme_volatility_cooldown_minutes", 30))
+
         saved = st.form_submit_button("Save Settings")
         if saved:
             config_path = Path(__file__).parent.parent.parent / "config" / "config.json"
@@ -1052,6 +1183,12 @@ def _render_settings():
             cfg["risk"]["max_drawdown"] = max_dd
             cfg["risk"]["max_consecutive_losses"] = int(max_losses)
             cfg["bot"]["leverage"] = int(leverage)
+            cfg.setdefault("risk", {}).setdefault("portfolio", {})["correlation_threshold"] = round(corr_thresh, 2)
+            cfg["risk"].setdefault("portfolio", {})["max_concentration_single"] = round(max_conc, 4)
+            cfg["risk"].setdefault("kelly", {})["enabled"] = kelly_enabled
+            cfg["risk"]["kelly"]["edge_multiplier"] = round(kelly_edge, 2)
+            cfg["risk"].setdefault("regime", {})["enabled"] = regime_enabled
+            cfg["risk"]["regime"]["extreme_volatility_cooldown_minutes"] = int(vol_cooldown)
             with open(config_path, "w") as f:
                 json.dump(cfg, f, indent=2)
             reload_config()

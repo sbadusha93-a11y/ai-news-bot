@@ -10,7 +10,7 @@ class TechnicalIndicators:
         self.indicator_settings = bot_config["indicator_settings"]
 
     def compute_all(self, df: pd.DataFrame) -> pd.DataFrame:
-        if df.empty or len(df) < 50:
+        if df.empty or len(df) < 30:
             return df
 
         df = df.copy()
